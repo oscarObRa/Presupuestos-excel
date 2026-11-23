@@ -619,19 +619,6 @@ class Constructor:
         escribir_celda(ws, r, 1, "I.- Propuesta Económica:", font=DNA.font_subtitulo_fallback())
         r += 1
 
-        # Encabezados de tabla (fila 22) - Verde ICEL
-        r = 22
-        headers = ["Part.", "Concepto", "Unidad", "Cantidad", "Precio U.", "Importe"]
-        for col_idx, texto in enumerate(headers, start=1):
-            cell = ws.cell(row=r, column=col_idx, value=texto)
-            cell.fill = DNA.fill_verde_icel()
-            cell.font = DNA.font_header_tabla_fallback(blanco=True)
-            cell.border = DNA.border_header_tabla()
-            cell.alignment = DNA.align_center_nowrap()
-
-        fila_inicio_suma = r + 1
-        r = fila_inicio_suma
-
         # Obtener totales por partida del presupuesto para crear la tabla dinámica
         # self._partidas contiene (nombre_partida, celda_subtotal)
         cd = getattr(self, "_pres_cd", None)
@@ -641,63 +628,160 @@ class Constructor:
         iva = getattr(self, "_pres_iva", None)
         gran = getattr(self, "_pres_gran", None)
 
-        # Si tenemos partidas del presupuesto, usarlas; sino crear estructura básica
-        partidas = getattr(self, "_partidas", [])
+        # Leer TODOS los conceptos del Presupuesto para mostrar en la Portada
+        ws_pres = self.wb["Presupuesto"]
         
-        if partidas:
-            # Iterar partidas y subpartidas (conceptos)
-            for nombre_part, celda_sub in partidas:
-                # Fila de título de partida (ej. "1 | Modificaciones en vano...")
-                # Extraer número y título si vienen combinados
-                if " | " in nombre_part:
-                    num_part, titulo_part = nombre_part.split(" | ", 1)
-                else:
-                    num_part, titulo_part = "", nombre_part
-                
-                escribir_celda(ws, r, 1, num_part, font=DNA.font_partida(), alignment=DNA.align_center())
-                merge_y_escribir(ws, f"B{r}:F{r}", titulo_part,
+        # Encabezados de tabla en Portada (Verde ICEL)
+        headers_portada = ["Id", "Concepto", "Unidad", "Cantidad", "P.U.", "Importe"]
+        for i, h in enumerate(headers_portada, 1):
+            cell = ws.cell(row=r, column=i, value=h)
+            cell.font = DNA.font_header_tabla_fallback(blanco=True)
+            cell.fill = DNA.fill_verde_icel()
+            cell.border = DNA.border_header_tabla()
+            cell.alignment = DNA.align_center_nowrap()
+        r += 1
+        
+        # Iterar todas las filas del Presupuesto y copiar conceptos
+        primera_fila_concepto = None
+        ultima_fila_concepto = None
+        partida_actual = ""
+        for row_idx in range(8, ws_pres.max_row + 1):  # Presupuesto data starts at row 8
+            id_entrada = ws_pres.cell(row=row_idx, column=1).value
+            clave = ws_pres.cell(row=row_idx, column=2).value
+            descripcion = ws_pres.cell(row=row_idx, column=3).value
+            cantidad = ws_pres.cell(row=row_idx, column=4).value
+            unidad = ws_pres.cell(row=row_idx, column=5).value
+            pu = ws_pres.cell(row=row_idx, column=6).value
+            importe = ws_pres.cell(row=row_idx, column=7).value
+            
+            # Saltar filas vacías
+            if not id_entrada:
+                continue
+            
+            # Detectar fila de partida (empieza con "PARTIDA" o es número de partida)
+            es_partida = isinstance(id_entrada, str) and id_entrada.startswith("PARTIDA")
+            es_subtotal = isinstance(id_entrada, str) and id_entrada.isdigit()
+            
+            if es_partida:
+                # Capturar nombre de la partida para el subtotal
+                partida_actual = descripcion or id_entrada
+                # Escribir encabezado de partida
+                merge_y_escribir(ws, f"A{r}:F{r}", f"PARTIDA: {partida_actual}",
                                  font=DNA.font_partida(),
                                  alignment=DNA.align_left())
-                # Aplicar bordes a toda la fila de partida
                 for col in range(1, 7):
                     ws.cell(row=r, column=col).border = DNA.border_partida()
+                    ws.cell(row=r, column=col).fill = DNA.fill_verde_icel()
                 r += 1
-                
-                # Aquí irían los conceptos (subpartidas) de cada partida
-                # Como no tenemos el detalle en _partidas, solo mostramos el subtotal
-                # La fórmula del subtotal ya está en celda_sub
-                escribir_celda(ws, r, 1, "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-                merge_y_escribir(ws, f"B{r}:E{r}", "Subtotal " + nombre_part,
-                                 font=DNA.font_cuerpo_fallback(),
-                                 alignment=DNA.align_left())
-                escribir_celda(ws, r, 6, f"=Presupuesto!{celda_sub}",
-                               font=DNA.font_moneda(bold=True),
-                               alignment=DNA.align_right(),
-                               number_format="$#,##0.00")
-                for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_celda()
-                r += 1
-        else:
-            # Fallback: mostrar resumen económico simple
-            filas_resumen = [
-                ("Costo Directo", f"=Presupuesto!{cd}" if cd else None),
-                ("Indirectos", f"=Presupuesto!{ind}" if ind else None),
-                ("Utilidad", f"=Presupuesto!{util}" if util else None),
-                ("Subtotal (sin IVA)", f"=Presupuesto!{sin_iva}" if sin_iva else None),
-                ("IVA (16%)", f"=Presupuesto!{iva}" if iva else None),
-            ]
-            for label, formula in filas_resumen:
-                merge_y_escribir(ws, f"A{r}:E{r}", label,
+                continue
+            
+            if es_subtotal and primera_fila_concepto is not None:
+                # Es el subtotal de la partida actual
+                merge_y_escribir(ws, f"B{r}:E{r}", f"Subtotal {partida_actual}",
                                  font=DNA.font_cuerpo_fallback(bold=True),
-                                 alignment=DNA.align_right())
-                if formula:
-                    escribir_celda(ws, r, 6, formula,
+                                 alignment=DNA.align_left())
+                if importe:
+                    escribir_celda(ws, r, 6, importe,
                                    font=DNA.font_moneda(bold=True),
                                    alignment=DNA.align_right(),
                                    number_format="$#,##0.00")
                 for col in range(1, 7):
                     ws.cell(row=r, column=col).border = DNA.border_celda()
                 r += 1
+                continue
+            
+            # Es un concepto normal
+            if primera_fila_concepto is None:
+                primera_fila_concepto = r
+            
+            escribir_celda(ws, r, 1, id_entrada, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 2, descripcion or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
+            escribir_celda(ws, r, 3, unidad or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 4, cantidad, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
+            
+            # PU: referencia a Presupuesto (que ya referencia APU o catálogo)
+            if pu is not None:
+                escribir_celda(ws, r, 5, pu,
+                               font=DNA.font_moneda(),
+                               alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+            
+            # Importe: referencia a Presupuesto
+            if importe is not None:
+                escribir_celda(ws, r, 6, importe,
+                               font=DNA.font_cuerpo_fallback(),
+                               alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+            
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+            
+            # Ajustar altura según descripción
+            if descripcion:
+                lineas = max(1, (len(str(descripcion)) // 60) + 1)
+                ws.row_dimensions[r].height = max(15, lineas * 12.5)
+            
+            ultima_fila_concepto = r
+            r += 1
+            
+            # Es un concepto normal
+            if primera_fila_concepto is None:
+                primera_fila_concepto = r
+            
+            escribir_celda(ws, r, 1, id_entrada, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 2, descripcion or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
+            escribir_celda(ws, r, 3, unidad or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 4, cantidad, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
+            
+            # PU: referencia a Presupuesto (que ya referencia APU o catálogo)
+            if pu is not None:
+                escribir_celda(ws, r, 5, pu,
+                               font=DNA.font_moneda(),
+                               alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+            
+            # Importe: referencia a Presupuesto
+            if importe is not None:
+                escribir_celda(ws, r, 6, importe,
+                               font=DNA.font_cuerpo_fallback(),
+                               alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+            
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+            
+            # Ajustar altura según descripción
+            if descripcion:
+                lineas = max(1, (len(str(descripcion)) // 60) + 1)
+                ws.row_dimensions[r].height = max(15, lineas * 12.5)
+            
+            ultima_fila_concepto = r
+            r += 1
+        
+        # Si no hay conceptos, fallback a resumen por partidas
+        if primera_fila_concepto is None and partidas:
+            for nombre_part, celda_sub in partidas:
+                if " | " in nombre_part:
+                    num_part, titulo_part = nombre_part.split(" | ", 1)
+                else:
+                    num_part, titulo_part = "", nombre_part
+                escribir_celda(ws, r, 1, num_part, font=DNA.font_partida(), alignment=DNA.align_center())
+                merge_y_escribir(ws, f"B{r}:F{r}", titulo_part,
+                                 font=DNA.font_partida(), alignment=DNA.align_left())
+                for col in range(1, 7):
+                    ws.cell(row=r, column=col).border = DNA.border_partida()
+                r += 1
+                escribir_celda(ws, r, 1, "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+                merge_y_escribir(ws, f"B{r}:E{r}", "Subtotal " + nombre_part,
+                                 font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
+                escribir_celda(ws, r, 6, f"=Presupuesto!{celda_sub}",
+                               font=DNA.font_moneda(bold=True), alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+                for col in range(1, 7):
+                    ws.cell(row=r, column=col).border = DNA.border_celda()
+                r += 1
+        
+        fila_fin_suma = r - 1
 
         fila_fin_suma = r - 1
 
