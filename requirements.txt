@@ -1,0 +1,47 @@
+# Presupuestador PONTEM — Dependencias
+# Instalar: pip install -r requirements.txt
+
+# ============================================================
+# Núcleo (siempre necesario)
+# ============================================================
+openpyxl>=3.1          # Lectura/escritura de Excel
+
+# ============================================================
+# Paso 3-4: Lectura de datos y matcheo
+# ============================================================
+pandas>=2.0            # Lectura de archivos de entrada
+rapidfuzz>=3.0         # Fuzzy matching de conceptos
+
+# ============================================================
+# Paso 6: CLI
+# ============================================================
+typer>=0.12            # CLI interactiva
+rich>=13.0             # Output formateado con colores
+
+# ============================================================
+# Paso 2: Configuración
+# ============================================================
+pyyaml>=6.0            # Lectura de config.yaml
+
+# ============================================================
+# Frontend web (opcional)
+# ============================================================
+streamlit>=1.57        # App web: streamlit run app.py
+
+# ============================================================
+# Exportación a PDF (Windows con Excel)
+# ============================================================
+pywin32>=306           # Automatización de Excel vía COM
+pypdf>=4.0             # Unión de PDFs por hoja
+
+# ============================================================
+# IA para conceptos dudosos (opcional; ver .env.example)
+# ============================================================
+requests>=2.31         # Cliente HTTP para APIs OpenAI-compatible (DeepSeek/OpenRouter)
+
+# ============================================================
+# Fases futuras (no instalar aún si no se usan)
+# ============================================================
+# pydantic>=2.0       # Validación de datos (F4+)
+# formulas>=1.2       # Validación de fórmulas Excel (F7)
+# anthropic>=0.30     # Sugerencias LLM (F8)

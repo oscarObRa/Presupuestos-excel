@@ -1,0 +1,227 @@
+{
+  "conceptos": [
+    {
+      "id": "PONTEM-0001",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Acero",
+      "clave": "CAT-001",
+      "descripcion": "Concepto de prueba numero 1 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 575.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0002",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Concreto",
+      "clave": "CAT-002",
+      "descripcion": "Concepto de prueba numero 2 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 651.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0003",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Acero",
+      "clave": "CAT-003",
+      "descripcion": "Concepto de prueba numero 3 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 726.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0004",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Concreto",
+      "clave": "CAT-004",
+      "descripcion": "Concepto de prueba numero 4 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 802.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0005",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Acero",
+      "clave": "CAT-005",
+      "descripcion": "Concepto de prueba numero 5 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 877.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0006",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Concreto",
+      "clave": "CAT-006",
+      "descripcion": "Concepto de prueba numero 6 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 953.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0007",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Acero",
+      "clave": "CAT-007",
+      "descripcion": "Concepto de prueba numero 7 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 1028.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0008",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Concreto",
+      "clave": "CAT-008",
+      "descripcion": "Concepto de prueba numero 8 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 1104.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0009",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Acero",
+      "clave": "CAT-009",
+      "descripcion": "Concepto de prueba numero 9 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 1179.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0010",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Cimentacion",
+      "nivel_2": "Concreto",
+      "clave": "CAT-010",
+      "descripcion": "Concepto de prueba numero 10 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 1255.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0011",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Acero",
+      "clave": "CAT-011",
+      "descripcion": "Concepto de prueba numero 11 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 1330.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0012",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Concreto",
+      "clave": "CAT-012",
+      "descripcion": "Concepto de prueba numero 12 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 1406.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0013",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Acero",
+      "clave": "CAT-013",
+      "descripcion": "Concepto de prueba numero 13 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 1481.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0014",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Concreto",
+      "clave": "CAT-014",
+      "descripcion": "Concepto de prueba numero 14 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 1557.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0015",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Acero",
+      "clave": "CAT-015",
+      "descripcion": "Concepto de prueba numero 15 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 1632.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0016",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Concreto",
+      "clave": "CAT-016",
+      "descripcion": "Concepto de prueba numero 16 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 1708.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0017",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Acero",
+      "clave": "CAT-017",
+      "descripcion": "Concepto de prueba numero 17 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 1783.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0018",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Concreto",
+      "clave": "CAT-018",
+      "descripcion": "Concepto de prueba numero 18 - concreto armado",
+      "unidad": "M3",
+      "precio_unitario": 1859.0,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0019",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Acero",
+      "clave": "CAT-019",
+      "descripcion": "Concepto de prueba numero 19 - concreto armado",
+      "unidad": "M2",
+      "precio_unitario": 1934.5,
+      "aplicacion": "general"
+    },
+    {
+      "id": "PONTEM-0020",
+      "paquete": "EDIFICACION",
+      "nivel_1": "Estructura",
+      "nivel_2": "Concreto",
+      "clave": "CAT-020",
+      "descripcion": "Concepto de prueba numero 20 - concreto armado",
+      "unidad": "KG",
+      "precio_unitario": 2010.0,
+      "aplicacion": "general"
+    }
+  ],
+  "meta": {
+    "version": "2026-01"
+  }
+}

@@ -1,0 +1,78 @@
+# Presupuestador PONTEM — Configuración
+# =====================================
+# Valores por defecto para la CLI.
+# El usuario puede sobrescribirlos en cada ejecución.
+
+# --- Matcheo ---
+matcher:
+  umbral_fuzzy: 55           # 0-100. Score mínimo para 'confirmado' (55-70 recomendado)
+  limite_candidatos: 10      # Nº de candidatos a mostrar en Revisión por concepto dudoso
+  usar_llm: false            # Invocar IA para mapeos dudosos (ver sección llm)
+
+# --- LLM (solo si usar_llm: true) ---
+# Proveedor OpenAI-compatible: "deepseek" o "openrouter".
+# La llave se toma de la variable de entorno indicada (ver .env.example).
+llm:
+  provider: deepseek                 # deepseek | openrouter
+  model: deepseek-chat               # DeepSeek directo. OpenRouter: deepseek/deepseek-chat
+  base_url: ""                       # vacío = autodetecta según provider
+  api_key_env: ""                    # vacío = usa DEEPSEEK_API_KEY / OPENROUTER_API_KEY
+  max_tokens: 2048
+  temperature: 0
+  lote: 8                            # conceptos por llamada
+  max_items: 200                     # tope de conceptos a resolver por IA
+  max_candidatos: 8                  # candidatos por concepto que se envían al modelo
+  auto_aplicar: true                 # aplicar la clave elegida por la IA al presupuesto
+
+# --- FASAR ---
+fasar:
+  # Parámetros por defecto (se incrustan en la plantilla; el usuario puede editarlos en Excel)
+  dias_calendario: 365
+  descansos_semanales: 52
+  descansos_obligatorios: 7
+  vacaciones_dias: 12
+  prima_vacacional: 0.25
+  aguinaldo_dias: 15
+  ausentismo_dias: 0
+  uma_diaria: 117.31
+  tope_sbc_uma: 25
+  # Cuotas patronales
+  riesgo_trabajo: 0.0758875
+  em_cuota_fija: 0.204
+  em_excedente: 0.011
+  em_prestaciones: 0.007
+  em_gastos_medicos: 0.0105
+  invalidez_vida: 0.0175
+  guarderias: 0.01
+  sar_retiro: 0.02
+  cesantia_vejez: 0.0315
+  infonavit: 0.05
+  isn_estatal: 0.03
+
+# --- Salida ---
+salida:
+  carpeta: salidas           # Carpeta base de salidas
+  formato_timestamp: "%Y-%m-%d_%H%M"  # Formato para subcarpeta con timestamp
+  archivo_salida: presupuesto.xlsx
+  archivo_error: presupuesto_con_errores.xlsx
+
+# --- Plantilla ---
+plantilla:
+  archivo: plantillas/machote.xlsx
+  # Hojas que contiene la plantilla (no se modifican)
+  hojas_fijas:
+    - Parametros
+    - Calculo_categoria
+    - Cuadrillas
+    - Variables
+
+# --- Validación ---
+validacion:
+  check_claves_presupuesto: true     # Toda clave en Presupuesto existe en Insumos
+  check_claves_apu: true             # Toda clave en APU existe en Insumos
+  check_categorias_cuadrillas: true  # Toda categoría en Cuadrillas existe en Categorias
+  check_unidades: true               # Unidades consistentes entre Presupuesto e Insumos
+  check_ciclos: true                 # Sin ciclos de referencia entre hojas
+  check_formulas: true               # Sintaxis válida de fórmulas
+  check_totales: true                # Totales cuadran
+  guardar_con_errores: true          # Si hay errores, guardar como presupuesto_con_errores.xlsx
