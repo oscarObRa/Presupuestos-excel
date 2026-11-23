@@ -112,6 +112,21 @@ with st.sidebar:
         help="Carpeta que contiene costos_unitarios/catalogo_costos.json"
     )
 
+    st.divider()
+    st.subheader("📂 Carpeta de salida")
+    st.caption("El presupuesto se guardará en esta carpeta.")
+    
+    # Carpeta de salida: por defecto salidas/ junto al script, pero editable
+    default_salida = SCRIPT_DIR / "salidas"
+    salida_path = st.text_input(
+        "Ruta de salida",
+        value=str(default_salida),
+        help="Carpeta donde se guardará el presupuesto.xlsx y presupuesto.pdf"
+    )
+    carpeta_salida = Path(salida_path)
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    st.caption(f"📁 Se guardará en: `{carpeta_salida}`")
+
 # ---------------------------------------------------------------------------
 # Área principal: archivo de entrada
 # ---------------------------------------------------------------------------
@@ -139,16 +154,40 @@ if archivo is not None:
         st.error(f"Error al leer el archivo: {e}")
 
 # ---------------------------------------------------------------------------
-# Botón: Generar
+# Estado de sesión para regenerar
+# ---------------------------------------------------------------------------
+if "presupuesto_generado" not in st.session_state:
+    st.session_state.presupuesto_generado = False
+    st.session_state.ruta_salida = None
+    st.session_state.ruta_pdf = None
+    st.session_state.archivo_nombre = None
+
+# ---------------------------------------------------------------------------
+# Botón: Generar / Regenerar
 # ---------------------------------------------------------------------------
 
 st.divider()
 
-col_btn, col_space = st.columns([1, 3])
-with col_btn:
-    generar = st.button("🚀 Generar Presupuesto", type="primary", use_container_width=True)
+# Determinar qué botón mostrar
+if st.session_state.presupuesto_generado and archivo is not None and archivo.name == st.session_state.archivo_nombre:
+    col_btn1, col_btn2, col_space = st.columns([1, 1, 2])
+    with col_btn1:
+        regenerar = st.button("🔄 Regenerar Presupuesto", type="secondary", use_container_width=True,
+                              help="Borra el anterior y genera uno nuevo")
+    with col_btn2:
+        if st.button("🗑️ Limpiar", use_container_width=True):
+            st.session_state.presupuesto_generado = False
+            st.session_state.ruta_salida = None
+            st.session_state.ruta_pdf = None
+            st.session_state.archivo_nombre = None
+            st.rerun()
+else:
+    col_btn, col_space = st.columns([1, 3])
+    with col_btn:
+        generar = st.button("🚀 Generar Presupuesto", type="primary", use_container_width=True)
+    regenerar = False
 
-if generar:
+if generar or regenerar:
     if archivo is None:
         st.error("Primero selecciona un archivo de entrada.")
     else:
@@ -157,8 +196,19 @@ if generar:
             tmp.write(archivo.getvalue())
             ruta_entrada = tmp.name
 
-        # Directorio de salida (mismo que el script)
-        carpeta_salida = SCRIPT_DIR / "salidas"
+        # Usar carpeta de salida del sidebar
+        carpeta_salida = Path(salida_path)
+        carpeta_salida.mkdir(parents=True, exist_ok=True)
+
+        # Si es regenerar, borrar archivos previos
+        if regenerar and st.session_state.ruta_salida:
+            try:
+                if os.path.exists(st.session_state.ruta_salida):
+                    os.unlink(st.session_state.ruta_salida)
+                if st.session_state.ruta_pdf and os.path.exists(st.session_state.ruta_pdf):
+                    os.unlink(st.session_state.ruta_pdf)
+            except Exception:
+                pass
 
         try:
             with st.status("Procesando...", expanded=True) as status:
@@ -275,10 +325,20 @@ if generar:
 
                 status.update(label="Procesamiento completo!", state="complete")
 
+            # Guardar en session state para regeneración y descarga
+            st.session_state.presupuesto_generado = True
+            st.session_state.ruta_salida = str(ruta_salida)
+            st.session_state.ruta_pdf = str(ruta_pdf) if ruta_pdf else None
+            st.session_state.archivo_nombre = archivo.name
+
             # 5. Mostrar resultado y descarga
             st.success(f"✅ Presupuesto generado exitosamente")
 
-            # Leer archivo para descarga
+            st.info(f"📁 Archivo guardado en: `{ruta_salida}`")
+            if ruta_pdf:
+                st.info(f"📄 PDF guardado en: `{ruta_pdf}`")
+
+            # Leer archivo para descarga (el download_button descarga al navegador, pero el archivo ya está en la carpeta de salida)
             colx, colp = st.columns(2)
             with colx:
                 with open(ruta_salida, "rb") as f:
@@ -319,6 +379,59 @@ if generar:
             st.error(f"Error: {e}")
             import traceback
             st.code(traceback.format_exc())
+
+# ---------------------------------------------------------------------------
+# Mostrar resultado previo si ya se generó (y no es una nueva generación)
+# ---------------------------------------------------------------------------
+elif st.session_state.presupuesto_generado and archivo is not None and archivo.name == st.session_state.archivo_nombre:
+    st.success(f"✅ Presupuesto ya generado: `{st.session_state.archivo_nombre}`")
+    
+    ruta_salida = st.session_state.ruta_salida
+    ruta_pdf = st.session_state.ruta_pdf
+    
+    st.info(f"📁 Archivo guardado en: `{ruta_salida}`")
+    if ruta_pdf:
+        st.info(f"📄 PDF guardado en: `{ruta_pdf}`")
+
+    # Botones de descarga
+    colx, colp = st.columns(2)
+    with colx:
+        if os.path.exists(ruta_salida):
+            with open(ruta_salida, "rb") as f:
+                st.download_button(
+                    label="📥 Descargar presupuesto.xlsx",
+                    data=f,
+                    file_name=f"presupuesto_{archivo.name}",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True,
+                )
+        else:
+            st.warning("⚠️ Archivo XLSX no encontrado en disco. Haz clic en 'Regenerar'.")
+    with colp:
+        if ruta_pdf and os.path.exists(ruta_pdf):
+            with open(ruta_pdf, "rb") as f:
+                st.download_button(
+                    label="🖨️ Descargar PDF (Presupuesto + APUs)",
+                    data=f,
+                    file_name=f"presupuesto_{archivo.name.replace('.xlsx', '')}.pdf",
+                    mime="application/pdf",
+                    type="secondary",
+                    use_container_width=True,
+                )
+        elif ruta_pdf:
+            st.warning("⚠️ Archivo PDF no encontrado en disco.")
+
+    # Info de hojas
+    if os.path.exists(ruta_salida):
+        wb = openpyxl.load_workbook(str(ruta_salida))
+        fijas = {"Portada", "Presupuesto", "Parametros", "Calculo_categoria",
+                 "Cuadrillas", "Variables", "Insumos", "Notas", "Categorias"}
+        hojas_dinamicas = [s for s in wb.sheetnames if s not in fijas]
+        apus = hojas_dinamicas
+        st.caption(f"Hojas generadas: {', '.join(hojas_dinamicas)}")
+        st.caption(f"APUs en PDF: {len(apus)} hoja(s) individual(es)")
+        st.caption("💡 Abre el archivo en Excel. Al modificar un PU en **Insumos**, todo se recalcula automáticamente.")
 
 # ---------------------------------------------------------------------------
 # Pie
