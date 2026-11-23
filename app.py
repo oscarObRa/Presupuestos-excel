@@ -179,10 +179,6 @@ if generar:
 
                 st.write(f"✓ {cost_client.descripcion_contrato()}")
 
-                idx = Indexador(str(cost_client.indice_path))
-                total = idx.cargar()
-                st.write(f"✓ Catálogo: {total:,} conceptos")
-
                 # Proveedor de APUs (costos.db; fallback matrices)
                 from src.apu_db import ProveedorAPU
                 apu_prov = ProveedorAPU(repo=str(cost_client.repo) if cost_client.repo else None)
@@ -192,9 +188,9 @@ if generar:
                 else:
                     st.warning("No se encontró costos.db ni MATRICES; APUs/Insumos quedarán vacíos.")
 
-                # 3. Matchear
+                # 3. Matchear (usa ClienteCosteo.buscar() Nivel 3 como fuente principal)
                 st.write("Matcheando conceptos...")
-                matcher = Matcher(idx, umbral=umbral, cliente=cost_client)
+                matcher = Matcher(cliente=cost_client, umbral=umbral)
                 resultados = matcher.emparejar(conceptos_entrada)
                 stats = matcher.stats_matcheo(resultados)
 
@@ -206,7 +202,7 @@ if generar:
                         try:
                             from src.llm import aplicar_sugerencias
                             sugerencias = _llm.resolver(resultados)
-                            aplicadas = aplicar_sugerencias(resultados, idx, sugerencias,
+                            aplicadas = aplicar_sugerencias(resultados, cost_client, sugerencias,
                                                             auto_aplicar=_llm_cfg.get("auto_aplicar", True))
                             st.write(f"✓ IA revisó {len(sugerencias)}, aplicó {aplicadas}")
                             stats = matcher.stats_matcheo(resultados)
@@ -260,7 +256,6 @@ if generar:
                     ruta_plantilla=str(plantilla),
                     proyecto=proyecto,
                     resultados_matcheo=resultados,
-                    indice=idx,
                     carpeta_salida=str(carpeta_salida),
                     usar_timestamp=True,
                     apu_provider=apu_prov,
