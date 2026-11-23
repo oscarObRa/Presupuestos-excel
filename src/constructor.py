@@ -147,26 +147,32 @@ class Constructor:
     # ------------------------------------------------------------------
 
     def preparar_apus(self, resultados_matcheo: list[dict]):
-        """Asocia cada concepto con su APU (matriz) y prepara nombres de hoja."""
+        """Asocia cada concepto con su APU (matriz) y prepara nombres de hoja.
+        
+        La clave del mapa es el id_entrada (ej. CIM-001), no la clave_sugerida de la BD.
+        El nombre de la hoja APU se deriva del id_entrada.
+        """
         if self.apu_provider is None:
             return
         usados = {str(s).lower() for s in self.wb.sheetnames}
         for res in resultados_matcheo:
             if res.get("estado") not in ("confirmado", "dudoso", "confirmado_ia"):
                 continue
-            clave = res.get("clave_sugerida")
-            if not clave:
+            id_entrada = res.get("id_entrada", "")
+            clave_bd = res.get("clave_sugerida")
+            if not id_entrada or not clave_bd:
                 continue
             try:
-                apu = self.apu_provider.apu_de(clave)
+                apu = self.apu_provider.apu_de(clave_bd)
             except Exception:
                 apu = None
             if not apu or not apu.get("insumos"):
                 continue
-            self.apu_por_clave[clave] = apu
-            nombre = self._nombre_hoja_apu(clave, usados)
+            # Usar id_entrada como clave (ej. CIM-001), no la clave de la BD
+            self.apu_por_clave[id_entrada] = apu
+            nombre = self._nombre_hoja_apu(id_entrada, usados)
             usados.add(nombre.lower())
-            self.apu_sheet[clave] = nombre
+            self.apu_sheet[id_entrada] = nombre
 
     @staticmethod
     def _nombre_hoja_apu(clave: str, usados: set) -> str:
@@ -221,8 +227,8 @@ class Constructor:
         for res in resultados_matcheo:
             if res.get("estado") not in ("confirmado", "dudoso", "confirmado_ia"):
                 continue
-            clave = res.get("clave_sugerida")
-            apu = self.apu_por_clave.get(clave)
+            id_entrada = res.get("id_entrada", "")
+            apu = self.apu_por_clave.get(id_entrada)
             if not apu:
                 continue
             cantidad_obra = float(res.get("cantidad", 0) or 0)
@@ -371,13 +377,14 @@ class Constructor:
 
     def crear_hojas_apu(self, resultados_matcheo: list[dict]):
         """Crea una hoja APU por cada concepto que tenga matriz de APU."""
-        for clave, apu in self.apu_por_clave.items():
-            nombre = self.apu_sheet.get(clave) or self._nombre_hoja_apu(clave, set())
+        for id_entrada, apu in self.apu_por_clave.items():
+            nombre = self.apu_sheet.get(id_entrada) or self._nombre_hoja_apu(id_entrada, set())
             if nombre in self.wb.sheetnames:
                 del self.wb[nombre]
             ws = self.wb.create_sheet(nombre)
-            pu_cell = self._escribir_hoja_apu(ws, clave, apu)
-            self.apu_pu_cell[clave] = pu_cell
+            # Pasar id_entrada para que aparezca en el encabezado de la hoja APU
+            pu_cell = self._escribir_hoja_apu(ws, id_entrada, apu)
+            self.apu_pu_cell[id_entrada] = pu_cell
 
     def _escribir_hoja_apu(self, ws, clave: str, apu: dict) -> str:
         """Escribe una hoja APU con los insumos reales de la matriz.
@@ -1161,14 +1168,16 @@ class Constructor:
         A=No. | B=Clave | C=Descripción | D=Cantidad | E=Unidad | F=PU | G=Importe.
 
         El PU se toma de la hoja APU del concepto (si existe), si no del catálogo.
+        La hoja APU se identifica por id_entrada (ej. CIM-001), no por clave_sugerida.
         """
+        id_entrada = resultado.get("id_entrada", "")
         clave = resultado["clave_sugerida"]
         descripcion = resultado.get("descripcion_sugerida") or resultado.get("concepto_entrada", "")
         unidad = resultado.get("unidad_sugerida") or resultado.get("unidad_entrada", "")
 
         fill_revisar = PatternFill(start_color="FDE9E9", end_color="FDE9E9", fill_type="solid") if revisar else None
 
-        escribir_celda(ws, r, 1, resultado.get("id_entrada", ""), font=font_normal, alignment=align_center)
+        escribir_celda(ws, r, 1, id_entrada, font=font_normal, alignment=align_center)
         escribir_celda(ws, r, 2, clave, font=font_normal, alignment=align_center)
         escribir_celda(ws, r, 3, descripcion, font=font_normal, alignment=align_left)
 
@@ -1178,12 +1187,13 @@ class Constructor:
         escribir_celda(ws, r, 5, unidad, font=font_normal, alignment=align_center)
 
         # PU: referencia a la hoja APU si existe; si no, PU del catálogo
+        # Buscar por id_entrada (ej. CIM-001), no por clave_sugerida (ej. 10608-003)
         if revisar:
             escribir_celda(ws, r, 6, 0, font=font_normal_rojo,
                            alignment=align_right, number_format="$#,##0.00")
-        elif clave in self.apu_sheet and clave in self.apu_pu_cell:
-            hoja = self.apu_sheet[clave]
-            celda_pu = self.apu_pu_cell[clave]
+        elif id_entrada in self.apu_sheet and id_entrada in self.apu_pu_cell:
+            hoja = self.apu_sheet[id_entrada]
+            celda_pu = self.apu_pu_cell[id_entrada]
             escribir_celda(ws, r, 6, f"='{hoja}'!{celda_pu}",
                            font=font_normal, alignment=align_right, number_format="$#,##0.00")
         else:
