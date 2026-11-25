@@ -43,8 +43,18 @@ def normalizar(texto: str) -> str:
 
 
 def normalizar_unidad(unidad: str) -> str:
-    """Normaliza unidad (conserva mayúsculas comunes: M2, M3, ML, KG, PZA, etc.)."""
-    unidad = unidad.strip().upper()
+    """Normaliza unidad (conserva mayúsculas comunes: M2, M3, ML, KG, PZA, etc.).
+
+    Homologa variantes ortográficas antes de comparar: M²/M3/m3/"M 2", "PZA.",
+    "metro  lineal", etc. La comparación de unidades debe ser estricta: una
+    descripción idéntica con otra unidad NO puede trazer el precio de esa otra
+    unidad.
+    """
+    txt = str(unidad or "").strip().upper()
+    txt = txt.replace("²", "2").replace("³", "3")
+    txt = re.sub(r"[^A-Z0-9 ]", " ", txt)          # quita . , " ( ) etc.
+    txt = re.sub(r"\s+", " ", txt).strip()
+    txt = re.sub(r"^([A-Z]+)\s+(\d+)$", r"\1\2", txt)   # "M 2" -> "M2"
     sinonimos = {
         "METRO CUADRADO": "M2", "METROS CUADRADOS": "M2", "M2": "M2",
         "METRO CUBICO": "M3", "METROS CUBICOS": "M3", "M3": "M3",
@@ -55,7 +65,7 @@ def normalizar_unidad(unidad: str) -> str:
         "JORNADA": "JOR", "JOR": "JOR", "SACO": "SAC", "SACOS": "SACO",
         "TONELADA": "TON", "TON": "TON", "LITRO": "LT", "LT": "LT",
     }
-    return sinonimos.get(unidad, unidad)
+    return sinonimos.get(txt, txt)
 
 
 # Stopwords en español + palabras de relleno típicas de presupuestos
@@ -112,8 +122,12 @@ class Matcher:
         self._tset: list[set] = []
         self._unidad: list[str] = []
         self._por_unidad: dict[str, list[int]] = defaultdict(list)
-        self._por_desc = {}
-        self._clave_a_idx: dict[str, int] = {}
+        # descripcion normalizada -> TODOS los conceptos con esa descripcion
+        # (pueden existir la misma descripcion en unidades distintas)
+        self._por_desc: dict[str, list[dict]] = defaultdict(list)
+        # clave del catalogo -> indices en self._conceptos (la fuente oficial
+        # devuelve claves; sin este mapa los candidatos oficiales se pierden)
+        self._clave_a_idx: dict[str, list[int]] = defaultdict(list)
 
         for i, c in enumerate(self._conceptos):
             tk = tokens(c.get("descripcion"))
@@ -126,7 +140,10 @@ class Matcher:
             self._por_unidad[uni].append(i)
             dn = normalizar(c.get("descripcion"))
             if dn:
-                self._por_desc[dn] = c
+                self._por_desc[dn].append(c)
+            clave = c.get("clave")
+            if clave:
+                self._clave_a_idx[str(clave)].append(i)
 
         # IDF: rareza de cada token en el catálogo
         df = Counter()
@@ -165,39 +182,42 @@ class Matcher:
         q_set = set(q_tokens)
         q_str = " ".join(sorted(q_set))
 
-        base = {
-            "id_entrada": id_entrada,
-            "partida": partida,
-            "subpartida": subpartida,
-            "concepto_entrada": desc_entrada,
-            "unidad_entrada": unidad_entrada,
-            "cantidad": cantidad,
-        }
-
-        # 1. Match exacto por descripción normalizada
-        if desc_norm in self._por_desc:
-            c = self._por_desc[desc_norm]
+        # 1. Match exacto por descripción normalizada Y unidad compatible.
+        #    Una descripción idéntica con OTRA unidad no puede traer su precio:
+        #    se asignaría un PU de una unidad distinta (error de hasta 1000×).
+        c_exacto = self._concepto_exacto(desc_norm, q_uni)
+        if c_exacto is not None:
             return {
                 **base,
-                "clave_sugerida": c.get("clave", ""),
-                "descripcion_sugerida": c.get("descripcion", ""),
-                "unidad_sugerida": c.get("unidad", ""),
+                "clave_sugerida": c_exacto.get("clave", ""),
+                "descripcion_sugerida": c_exacto.get("descripcion", ""),
+                "unidad_sugerida": c_exacto.get("unidad", ""),
                 "score": 100.0,
                 "metodo": "exacto",
                 "estado": "confirmado",
-                "pu_sugerido": c.get("precio_unitario", 0),
+                "pu_sugerido": c_exacto.get("precio_unitario", 0),
                 "candidatos": [],
+                "aviso": "",
             }
 
+        # Aviso: la descripción existe en el catálogo pero con otra(s) unidad(es)
+        aviso = ""
+        otros = self._por_desc.get(desc_norm) or []
+        if otros:
+            unidades = sorted({normalizar_unidad(x.get("unidad")) for x in otros})
+            aviso = (f"La descripción existe en el catálogo con unidad(es) "
+                     f"{', '.join(u or '(sin unidad)' for u in unidades)}; "
+                     f"la entrada solicita {q_uni or '(sin unidad)'}. "
+                     f"No se aplicó el precio de otra unidad.")
+
         # 2. Buscar candidatos con ClienteCosteo.buscar() (fuente oficial Nivel 3)
-        candidatos_oficiales = []
+        candidatos_oficiales: set[int] = set()
         if self.cliente:
             try:
                 oficiales = self.cliente.buscar(desc_entrada, limite=10)
                 for o in oficiales:
-                    idx = self._clave_a_idx.get(o.get("clave"))
-                    if idx is not None:
-                        candidatos_oficiales.append(idx)
+                    for idx in self._clave_a_idx.get(str(o.get("clave")), ()):
+                        candidatos_oficiales.add(idx)
             except Exception:
                 pass
 
@@ -205,7 +225,8 @@ class Matcher:
         if not self._tstr:
             return {**base, "clave_sugerida": "", "descripcion_sugerida": "",
                     "unidad_sugerida": "", "score": 0, "metodo": "sin_match",
-                    "estado": "sin_match", "pu_sugerido": 0, "candidatos": []}
+                    "estado": "sin_match", "pu_sugerido": 0, "candidatos": [],
+                    "aviso": aviso}
 
         q_str = " ".join(sorted(set(tokens(desc_entrada))))
         resultados_fuzzy = process.extract(
@@ -239,7 +260,7 @@ class Matcher:
         if not candidatos:
             return {**base, "clave_sugerida": "", "descripcion_sugerida": "",
                     "score": 0, "metodo": "sin_match", "estado": "sin_match",
-                    "pu_sugerido": 0, "candidatos": []}
+                    "pu_sugerido": 0, "candidatos": [], "aviso": aviso}
 
         candidatos.sort(reverse=True, key=lambda x: x[0])
         mejor_score, _, idx_best = candidatos[0]
@@ -274,19 +295,35 @@ class Matcher:
             "estado": estado,
             "pu_sugerido": self._conceptos[idx_best].get("precio_unitario", 0),
             "candidatos": top_candidatos,
+            "aviso": aviso,
         }
+
+    def _concepto_exacto(self, desc_norm: str, unidad_norm: str) -> Optional[dict]:
+        """Concepto con descripción EXACTA y la MISMA unidad (normalizada).
+
+        Devuelve None si la descripción existe pero con otra unidad: en ese caso
+        el precio de esa otra unidad no debe aplicarse a la entrada.
+        """
+        for c in self._por_desc.get(desc_norm, ()):
+            if normalizar_unidad(c.get("unidad")) == unidad_norm:
+                return c
+        return None
 
     def stats_matcheo(self, resultados: list[dict]) -> dict:
         total = len(resultados)
         exactos = sum(1 for r in resultados if r["metodo"] == "exacto")
+        oficiales = sum(1 for r in resultados if r["metodo"] == "oficial")
         fuzzy = sum(1 for r in resultados if r["metodo"] == "fuzzy")
+        llm = sum(1 for r in resultados if r["metodo"] == "llm")
         sin_match = sum(1 for r in resultados if r["metodo"] == "sin_match")
-        confirmados = sum(1 for r in resultados if r["estado"] == "confirmado")
+        confirmados = sum(1 for r in resultados if r["estado"] in ("confirmado", "confirmado_ia"))
         dudosos = sum(1 for r in resultados if r["estado"] == "dudoso")
         return {
             "total": total,
             "exactos": exactos,
+            "oficiales": oficiales,
             "fuzzy": fuzzy,
+            "llm": llm,
             "sin_match": sin_match,
             "confirmados": confirmados,
             "dudosos": dudosos,
@@ -299,21 +336,21 @@ class Matcher:
 # =============================================================================
 
 if __name__ == "__main__":
+    import os
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     from src.costeo_client import ClienteCosteo
 
-    idx = Indexador(r"C:\Pontem_dev\costeo\costos.db")
-    idx.cargar()
-    print(f"Catalogo: {idx.total} conceptos")
-
-    from src.costeo_client import ClienteCosteo
     cli = ClienteCosteo()
+    print(f"Contrato: {cli.descripcion_contrato()}")
     m = Matcher(cliente=cli, umbral=55)
     resultados = m.emparejar([
         {"id": "CIM-01", "concepto": "Excavacion en cepa material B", "unidad": "M3", "cantidad": 80},
         {"id": "CIM-02", "concepto": "Muro de block 15cm", "unidad": "M2", "cantidad": 500},
     ])
     for r in resultados:
-        print(f"{r['id_entrada']:8s} | {r['estado']:11s} | {r['score']:5.1f} | {r['clave_sugerida']} | {r['descripcion_sugerida'][:50]}")
+        print(f"{r['id_entrada']:8s} | {r['estado']:11s} | {r['metodo']:7s} | "
+              f"{r['score']:5.1f} | {r['clave_sugerida']} | {r['descripcion_sugerida'][:50]}")
+        if r.get("aviso"):
+            print(f"          aviso: {r['aviso']}")

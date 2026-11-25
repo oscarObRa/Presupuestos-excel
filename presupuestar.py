@@ -276,7 +276,8 @@ def main(
     matcher = Matcher(cliente=cost_client, umbral=umbral_fuzzy, piso=40)
     resultados = matcher.emparejar(conceptos_entrada)
     stats = matcher.stats_matcheo(resultados)
-    ok(f"{stats['exactos']} exactos, {stats['fuzzy']} fuzzy, {stats['sin_match']} sin match "
+    ok(f"{stats['exactos']} exactos, {stats['oficiales']} oficiales, "
+       f"{stats['fuzzy']} fuzzy, {stats['llm']} IA, {stats['sin_match']} sin match "
        f"({stats['pct_confirmados']}% confirmados)")
 
     # ---- IA opcional para dudosos / sin match ----
@@ -298,7 +299,9 @@ def main(
                 else:
                     paso(2, f"Consultando IA ({pendientes_ia} conceptos)...")
                     sugerencias = llm.resolver(resultados)
-                    aplicadas = aplicar_sugerencias(resultados, idx, sugerencias,
+                    # `indice` debe exponer por_clave(): el ClienteCosteo cumple
+                    # ese contrato (igual que el flujo web).
+                    aplicadas = aplicar_sugerencias(resultados, cost_client, sugerencias,
                                                     auto_aplicar=llm_cfg.get("auto_aplicar", True))
                     ok(f"IA revisó {len(sugerencias)} conceptos, aplicó {aplicadas}")
                     stats = matcher.stats_matcheo(resultados)
@@ -367,6 +370,8 @@ def main(
         usar_timestamp=False,
         apu_provider=apu_prov,
         incluir_revision=False,
+        validar=True,
+        recalcular=True,
     )
     ok("Presupuesto construido")
 

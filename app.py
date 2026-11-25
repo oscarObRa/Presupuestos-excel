@@ -310,6 +310,10 @@ if generar or regenerar:
                     usar_timestamp=True,
                     apu_provider=apu_prov,
                     incluir_revision=False,
+                    # Validación estática (rápida). El cuadre de totales con
+                    # recálculo de Excel se omite en la web: el PDF ya abre Excel.
+                    validar=True,
+                    recalcular=False,
                 )
                 st.write(f"✓ Presupuesto generado")
 

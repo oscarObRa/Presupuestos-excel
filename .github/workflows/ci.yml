@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  pruebas:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install openpyxl>=3.1 rapidfuzz>=3.0 pyyaml>=6.0
+
+      - name: Ejecutar suite de pruebas
+        run: python tests/run_all.py
+
+      - name: Comprobar que la CLI compila
+        run: python -m compileall -q src presupuestar.py app.py

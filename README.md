@@ -47,10 +47,29 @@ El resultado es un libro de Excel autocontenido, con dependencias encadenadas en
 
 ```
 Variables ──► Categorías ──► Cuadrillas ──┐
-                                          ├──► Insumos ──► APU_<clave> ──► Presupuesto
+                                          ├──► Insumos ──► APU_<id> ──► Presupuesto
 Insumos (materiales, equipo, herramienta) ┘
 Repo PONTEM ──► Insumos (tipo=concepto_repo) ──► Presupuesto
 ```
+
+### IDs locales (liga dentro del libro)
+
+Todo lo que se copia de la base general (catálogo/matrices) recibe un **ID local**
+del libro y **todas las referencias lo usan**:
+
+| Hoja | Columna | Contenido |
+|---|---|---|
+| **Insumos** | A `Id local` | `INS-001`, `INS-002`… generado para esta obra |
+| **Insumos** | I `Clave origen` | clave de la base general (trazabilidad) |
+| **APU_\<id\>** | A `Id local` | el mismo `INS-xxx` que en Insumos (liga por VLOOKUP) |
+| **APU_\<id\>** | G `Clave origen` | clave de la base general |
+| **Cuadrillas** | A `Id local` | el mismo `INS-xxx`, para que el VLOOKUP del $/Jornal resuelva |
+| **Presupuesto** | A `Id` | id local del concepto (ej. `CIM-01`), que es el nombre de su hoja APU |
+
+Con esto el libro es **autocontenido**: ninguna fórmula depende de claves que
+existen solo en la base general. Las cuadrillas copiadas se agregan a la hoja
+`Cuadrillas` con su $/Jornal de origen (columna I) para que la mano de obra no
+quede en `$0`.
 
 ---
 
@@ -103,10 +122,16 @@ Presupuestos-excel/
 ├─ requirements.txt          # Dependencias Python
 ├─ src/
 │  ├─ estilos.py             # Colores, fuentes, bordes
-│  ├─ indexador.py           # Carga e indexa catalogo_costos.json
+│  ├─ visual_dna.py          # Tokens visuales (DNA) de la marca
+│  ├─ indexador.py           # Índice sobre costos.db (SQLite)
 │  ├─ lector_entrada.py      # Lee el .xlsx de entrada (partidas/subpartidas)
-│  ├─ matcher.py             # Emparejamiento exacto y fuzzy
-│  ├─ constructor.py         # Construye el .xlsx (Presupuesto, APUs, Insumos, etc.)
+│  ├─ costeo_client.py       # Cliente del repo de costos (Nivel 1 / Nivel 3)
+│  ├─ matcher.py             # Emparejamiento exacto / oficial / fuzzy
+│  ├─ llm.py                 # Sugerencias con IA (DeepSeek / OpenRouter)
+│  ├─ apu_db.py              # APUs desde costos.db
+│  ├─ apu_source.py          # APUs desde las matrices .xlsx (con caché)
+│  ├─ constructor.py         # Construye el .xlsx (Presupuesto, APU, Portada...)
+│  ├─ validador.py           # Validación de integridad del libro generado
 │  ├─ formulas.py            # Helpers para fórmulas Excel
 │  └─ pdf_export.py          # Exporta Presupuesto + APUs a PDF
 ├─ plantillas/
@@ -174,12 +199,30 @@ python generar_plantilla.py
 
 ### Pruebas
 
+Las pruebas son autocontenidas (no necesitan el repo de costos ni las matrices):
+
 ```bat
 venv\Scripts\Activate.ps1
-python tests\test_constructor.py
-python tests\test_venado_e2e.py
-python tests\test_pdf_apus.py
+python tests\run_all.py
 ```
+
+O una suite individual:
+
+```bat
+python tests\test_matcher.py
+python tests\test_constructor.py
+python tests\test_validador.py
+```
+
+El CI (`.github/workflows/ci.yml`) ejecuta `tests/run_all.py` en cada push.
+
+### Validar un libro ya generado
+
+```bat
+python -m src.validador "salidas\presupuesto.xlsx"
+```
+
+Devuelve 0 si el libro no tiene errores y 1 si tiene alguno.
 
 ---
 
@@ -314,17 +357,27 @@ Sube el archivo, llena los datos del proyecto y descarga el `.xlsx` y el `.pdf`.
 
 ## Validaciones
 
-Antes de guardar la salida final, se verifican:
+Al terminar de construir el libro, `src/validador.py` lo revisa y reporta el
+resultado en la salida de la CLI. Las verificaciones son:
 
-1. Toda clave en `Presupuesto` existe en `Insumos`.
-2. Toda clave en `APU_<clave>` existe en `Insumos`.
-3. Toda categoría en `Cuadrillas` existe en `Categorías`.
-4. Consistencia de unidades entre `Presupuesto` e `Insumos`.
+1. Toda clave usada en un `VLOOKUP` a Insumos/Cuadrillas existe en esa hoja.
+2. Toda clave de insumo de las hojas APU existe en Insumos.
+2b. Los IDs locales de Insumos son únicos (si no, el VLOOKUP tomaría el costo
+   de otro insumo).
+3. Toda categoría usada en Cuadrillas existe en `Calculo_categoria`.
+4. Consistencia de unidades entre `Presupuesto`, las hojas APU e `Insumos`.
 5. Ausencia de ciclos de referencia entre hojas.
-6. Sintaxis válida de fórmulas.
-7. Cuadre de totales.
+6. Sintaxis válida de las fórmulas (paréntesis balanceados, sin `#REF!`, sin
+   referencias a hojas inexistentes).
+7. Cuadre de totales: se verifica la cadena de fórmulas (CD → indirectos →
+   utilidad → IVA → gran total) y, si hay Excel disponible, se recalcula una
+   copia del libro y se comparan los importes con la suma de los conceptos.
+8. Ninguna cuadrilla queda en `$0` (el `IFERROR` del VLOOKUP lo ocultaría y el
+   presupuesto quedaría subvaluado) y la tabla de la Portada suma el Costo
+   Directo del Presupuesto.
 
-Si hay errores, el archivo se guarda como `presupuesto_con_errores.xlsx` para depuración.
+Si el libro tiene errores, además se guarda una copia como
+`presupuesto_con_errores.xlsx` en la misma carpeta para depuración.
 
 ---
 

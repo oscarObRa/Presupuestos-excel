@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import datetime
+from copy import copy
 from pathlib import Path
 from typing import Optional
 
@@ -72,6 +73,15 @@ class Constructor:
         self.apu_por_clave: dict[str, dict] = {}       # clave -> apu (matriz)
         self.apu_sheet: dict[str, str] = {}            # clave -> nombre de hoja
         self.apu_pu_cell: dict[str, str] = {}          # clave -> "F45" (celda PU)
+
+        # IDs LOCALES de los insumos copiados de la base general.
+        # La clave general (catálogo/matrices) no existe en la plantilla local
+        # (p.ej. las cuadrillas 1A1P / 1T2E-U no están en la hoja Cuadrillas),
+        # por lo que cada insumo recibe un ID del libro (INS-001, INS-002, ...)
+        # y TODAS las referencias lo usan: Insumos, líneas de APU y Cuadrillas.
+        self._id_local_insumo: dict[str, str] = {}     # clave general -> INS-xxx
+        self._agg_insumos: dict[str, dict] = {}        # clave general -> agregado
+        self._rango_cuadrillas = "Cuadrillas!$A$4:$I$200"
 
         # Límites de filas (se actualizan al escribir datos)
         self._fila_insumos_inicio = 5  # después de headers
@@ -187,42 +197,13 @@ class Constructor:
             i += 1
         return nombre
 
-    def escribir_insumos(self, resultados_matcheo: list[dict]):
-        """Crea la hoja Insumos: lista consolidada a nivel MATERIAL/insumo.
+    def _agregar_insumos(self, resultados_matcheo: list[dict]) -> dict[str, dict]:
+        """Agrega los insumos de todos los APUs por clave de la fuente general.
 
-        Se agrega de todos los APUs (matrices): por cada insumo, la cantidad
-        total de la obra = Σ (cantidad del insumo en el APU × cantidad de obra).
-
-        Para tipo=cuadrilla: el Costo unitario es VLOOKUP a la hoja Cuadrillas (col C).
-        Para otros tipos: costo directo editable.
-
-        Columnas:
-        A: Clave | B: Tipo | C: Descripción | D: Unidad
-        E: Costo unitario | F: Cantidad total | G: Importe | H: Notas
+        Devuelve: clave general -> {tipo, desc, unidad, costo, cant, es_cuadrilla}
+        La cantidad total de la obra = S (cantidad del insumo en el APU x
+        cantidad de obra).
         """
-        if "Insumos" in self.wb.sheetnames:
-            del self.wb["Insumos"]
-        ws = self.wb.create_sheet("Insumos")
-
-        merge_y_escribir(ws, "A1:H1", "INSUMOS — Lista de materiales y recursos (explosión de APUs)",
-                         font=DNA.font_titulo(), fill=DNA.fill_verde_icel(), alignment=DNA.align_center())
-        for c in range(1, 9):
-            ws.cell(row=1, column=c).fill = DNA.fill_verde_icel()
-
-        merge_y_escribir(ws, "A2:H2",
-                         "Edita el Costo unitario (col E). Para Cuadrillas, edita en hoja Cuadrillas (col C).",
-                         font=DNA.font_pequeno(italic=True), alignment=DNA.align_left())
-
-        headers = ["Clave", "Tipo", "Descripción", "Unidad",
-                   "Costo unitario", "Cantidad total", "Importe", "Notas"]
-        anchos = [14, 14, 55, 10, 16, 16, 18, 24]
-        for i, (h, w) in enumerate(zip(headers, anchos), 1):
-            escribir_celda(ws, 4, i, h, font=DNA.font_header_tabla_fallback(blanco=True), fill=DNA.fill_verde_icel(),
-                           alignment=DNA.align_center_nowrap())
-            ws.column_dimensions[col_letra(i)].width = w
-        aplicar_borde(ws, 4, 1, 8)
-
-        # Agregación por clave de insumo
         agg: dict[str, dict] = {}
         for res in resultados_matcheo:
             if res.get("estado") not in ("confirmado", "dudoso", "confirmado_ia"):
@@ -241,50 +222,193 @@ class Constructor:
                     es_cuadrilla = ins.get("tipo", "").lower() in ("cuadrilla", "mano_obra")
                     a = {"tipo": ins.get("tipo", ""), "desc": ins.get("descripcion", ""),
                          "unidad": ins.get("unidad", ""), "costo": float(ins.get("costo", 0) or 0),
-                         "cant": 0.0, "es_cuadrilla": es_cuadrilla}
+                         "cant": 0.0, "es_cuadrilla": es_cuadrilla, "tasas": {}}
                     agg[k] = a
                 a["cant"] += float(ins.get("cantidad", 0) or 0) * cantidad_obra
+                costo = float(ins.get("costo", 0) or 0)
+                if costo:
+                    # Si la misma cuadrilla aparece con tasas distintas se conserva
+                    # la mas frecuente (la de la base general).
+                    clave_tasa = round(costo, 4)
+                    a["tasas"][clave_tasa] = a["tasas"].get(clave_tasa, 0) + 1
+                    if not a.get("costo"):
+                        a["costo"] = costo
+        return agg
+
+    @staticmethod
+    def _tasa_mayoritaria(tasas: dict) -> float:
+        """Tasa (costo unitario) mas frecuente de un insumo.
+
+        En caso de empate se toma la menor (conservadora para el presupuesto).
+        """
+        if not tasas:
+            return 0.0
+        return max(tasas.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+
+    def _asignar_ids_locales(self, agg: dict[str, dict]):
+        """Asigna a cada insumo copiado un ID local del libro (INS-001, ...).
+
+        El orden es estable (tipo, descripcion, clave general) para que el
+        libro sea reproducible entre ejecuciones.
+        """
+        self._id_local_insumo = {}
+        orden = sorted(
+            agg.keys(),
+            key=lambda k: (str(agg[k].get("tipo", "")), str(agg[k].get("desc", "")).upper(), str(k)),
+        )
+        for i, k in enumerate(orden, 1):
+            self._id_local_insumo[k] = f"INS-{i:03d}"
+
+    def escribir_cuadrillas(self, resultados_matcheo: list[dict]):
+        """Agrega a la hoja Cuadrillas las cuadrillas usadas en la obra.
+
+        La plantilla trae las cuadrillas base (CUAD001...), pero las matrices
+        usan claves propias (p.ej. 1A1P, 1T2E-U) que NO existen en esa hoja:
+        el VLOOKUP devolvia 0 y la mano de obra valia $0 (presupuesto
+        subvaluado).
+
+        Cada cuadrilla copiada de la base general recibe su ID local (INS-xxx)
+        y se escribe en la hoja con el $/Jornal de la fuente, de modo que:
+          - el VLOOKUP de Insumos!E resuelva, y
+          - la liga sea local (el libro no depende de claves externas).
+        """
+        if "Cuadrillas" not in self.wb.sheetnames:
+            return
+        agg = self._agg_insumos or self._agregar_insumos(resultados_matcheo)
+        self._agg_insumos = agg
+        if not agg:
+            return
+        self._asignar_ids_locales(agg)
+
+        ws = self.wb["Cuadrillas"]
+        # Primera fila libre despues de las cuadrillas de la plantilla
+        ultima = 4
+        for r in range(5, ws.max_row + 1):
+            if ws.cell(row=r, column=1).value:
+                ultima = r
+        fila = ultima + 1
+
+        # Estilo de referencia: la primera cuadrilla de la plantilla
+        estilos = None
+        if ws.cell(row=5, column=1).value:
+            estilos = [copy(ws.cell(row=5, column=c)._style) for c in range(1, 11)]
+
+        cuadrillas = [(self._id_local_insumo[k], k, a)
+                      for k, a in agg.items() if a.get("es_cuadrilla")]
+        cuadrillas.sort(key=lambda t: t[0])
+
+        for id_local, clave_general, a in cuadrillas:
+            for c in range(1, 11):
+                if estilos:
+                    ws.cell(row=fila, column=c)._style = copy(estilos[c - 1])
+            ws.cell(row=fila, column=1, value=id_local)
+            ws.cell(row=fila, column=2, value=a.get("desc", ""))
+            # Columnas C-H (composicion) se dejan vacias: la fuente general no
+            # trae el desglose por categoria, solo la tasa consolidada.
+            tasa = self._tasa_mayoritaria(a.get("tasas") or {}) or float(a.get("costo", 0) or 0)
+            celda_i = ws.cell(row=fila, column=9, value=round(tasa, 4))
+            celda_i.number_format = "$#,##0.00"
+            ws.cell(row=fila, column=10,
+                    value=f"{a.get('desc', '')} (origen: {clave_general})")
+            fila += 1
+
+        if cuadrillas:
+            self._rango_cuadrillas = f"Cuadrillas!$A$4:$I${fila - 1}"
+
+    def escribir_insumos(self, resultados_matcheo: list[dict]):
+        """Crea la hoja Insumos: lista consolidada a nivel MATERIAL/insumo.
+
+        Se agrega de todos los APUs (matrices): por cada insumo, la cantidad
+        total de la obra = S (cantidad del insumo en el APU x cantidad de obra).
+
+        Cada insumo copiado de la base general recibe un ID LOCAL (INS-001...),
+        que es el que se usa en todas las referencias (lineas de las hojas APU
+        y hoja Cuadrillas). La clave general se conserva en la columna I
+        ("Clave origen") para trazabilidad.
+
+        Para tipo=cuadrilla: el Costo unitario es VLOOKUP a la hoja Cuadrillas (col I).
+        Para otros tipos: costo directo editable.
+
+        Columnas:
+        A: Id local | B: Tipo | C: Descripcion | D: Unidad
+        E: Costo unitario | F: Cantidad total | G: Importe | H: Notas
+        I: Clave origen (base general)
+        """
+        if "Insumos" in self.wb.sheetnames:
+            del self.wb["Insumos"]
+        ws = self.wb.create_sheet("Insumos")
+
+        merge_y_escribir(ws, "A1:I1", "INSUMOS - Lista de materiales y recursos (explosion de APUs)",
+                         font=DNA.font_titulo(), fill=DNA.fill_verde_icel(), alignment=DNA.align_center())
+        for c in range(1, 10):
+            ws.cell(row=1, column=c).fill = DNA.fill_verde_icel()
+
+        merge_y_escribir(ws, "A2:I2",
+                         "Ids locales (INS-xxx) generados para este libro; la clave de la base "
+                         "general queda en la columna I. Edita el Costo unitario (col E). "
+                         "Para Cuadrillas, edita el $/Jornal en la hoja Cuadrillas.",
+                         font=DNA.font_pequeno(italic=True), alignment=DNA.align_left())
+
+        headers = ["Id local", "Tipo", "Descripcion", "Unidad",
+                   "Costo unitario", "Cantidad total", "Importe", "Notas", "Clave origen"]
+        anchos = [12, 14, 55, 10, 16, 16, 18, 24, 16]
+        for i, (h, w) in enumerate(zip(headers, anchos), 1):
+            escribir_celda(ws, 4, i, h, font=DNA.font_header_tabla_fallback(blanco=True), fill=DNA.fill_verde_icel(),
+                           alignment=DNA.align_center_nowrap())
+            ws.column_dimensions[col_letra(i)].width = w
+        aplicar_borde(ws, 4, 1, 9)
+
+        # Agregacion por clave de insumo de la fuente general
+        agg = self._agg_insumos or self._agregar_insumos(resultados_matcheo)
+        self._agg_insumos = agg
+        self._asignar_ids_locales(agg)
 
         r = 5
         _lbl_tipo = {"material": "Material", "mano_obra": "Cuadrilla",
                       "equipo": "Equipo", "herramienta": "Herramienta",
                       "auxiliar": "Auxiliar", "maquinaria": "Maquinaria"}
-        
-        # Rango de la hoja Cuadrillas para VLOOKUP (col A=ID, col I=$/Jornal)
-        rango_cuadrillas = "Cuadrillas!$A$4:$I$200"
 
-        for k in sorted(agg.keys()):
+        # Rango de la hoja Cuadrillas para VLOOKUP (col A=ID local, col I=$/Jornal)
+        rango_cuadrillas = self._rango_cuadrillas
+
+        # Orden estable por ID local
+        for k in sorted(agg.keys(), key=lambda x: self._id_local_insumo.get(x, x)):
             a = agg[k]
             es_cuadrilla = a.get("es_cuadrilla", False)
-            
-            escribir_celda(ws, r, 1, k, font=font_normal, alignment=align_center)
-            escribir_celda(ws, r, 2, a.get("tipo", "material").capitalize(),
+            id_local = self._id_local_insumo.get(k, k)
+
+            escribir_celda(ws, r, 1, id_local, font=font_normal, alignment=align_center)
+            tipo_texto = _lbl_tipo.get(str(a.get("tipo", "material")).lower(),
+                                      a.get("tipo", "material").capitalize())
+            escribir_celda(ws, r, 2, tipo_texto,
                            font=font_normal, alignment=align_center)
             escribir_celda(ws, r, 3, a["desc"], font=font_normal, alignment=align_left)
             escribir_celda(ws, r, 4, a["unidad"], font=font_normal, alignment=align_center)
-            
+
             # Columna E: Costo unitario
-            if a.get("es_cuadrilla", False):
-                # Para cuadrillas: VLOOKUP a hoja Cuadrillas (col A=ID, col 9=$/Jornal)
-                formula_vlookup = f'=IFERROR(VLOOKUP(A{r},Cuadrillas!$A$4:$I$200,9,FALSE),0)'
+            if es_cuadrilla:
+                # Para cuadrillas: VLOOKUP a hoja Cuadrillas (col A=ID local, col 9=$/Jornal)
+                formula_vlookup = f'=IFERROR(VLOOKUP(A{r},{rango_cuadrillas},9,FALSE),0)'
                 escribir_celda(ws, r, 5, formula_vlookup, font=font_normal_rojo,
                                alignment=align_right, number_format="$#,##0.00")
             else:
                 # Materiales, equipos, etc.: costo directo editable
                 escribir_celda(ws, r, 5, round(a["costo"], 4), font=font_normal_rojo,
                                alignment=align_right, number_format="$#,##0.00")
-            
+
             escribir_celda(ws, r, 6, round(a["cant"], 4), font=font_normal,
                            alignment=align_right, number_format="#,##0.0000")
             escribir_celda(ws, r, 7, f"=F{r}*E{r}", font=font_negrita,
                            alignment=align_right, number_format="$#,##0.00")
-            escribir_celda(ws, r, 8, "Cuadrilla" if a.get("es_cuadrilla") else "", 
+            escribir_celda(ws, r, 8, "Cuadrilla" if es_cuadrilla else "",
                            font=font_normal, alignment=align_left)
-            aplicar_borde(ws, r, 1, 8)
+            escribir_celda(ws, r, 9, k, font=font_normal, alignment=align_center)
+            aplicar_borde(ws, r, 1, 9)
             r += 1
 
         self._fila_insumos_fin = r - 1
         ws.freeze_panes = "A5"
+
     def escribir_revision(self, resultados_matcheo: list[dict]):
         """Crea la hoja Revision con los resultados del matcheo.
 
@@ -389,7 +513,11 @@ class Constructor:
     def _escribir_hoja_apu(self, ws, clave: str, apu: dict) -> str:
         """Escribe una hoja APU con los insumos reales de la matriz.
 
-        Columnas: A Clave | B Insumo | C Unidad | D Cantidad | E Costo unit. | F Importe
+        Columnas: A Id local | B Insumo | C Unidad | D Cantidad | E Costo unit. |
+                  F Importe | G Clave origen
+        La columna A usa el ID LOCAL del insumo (INS-xxx), que es el mismo que
+        tiene en la hoja Insumos: asi el VLOOKUP de E resuelve siempre dentro
+        del libro. La clave de la base general queda en la columna G.
         Devuelve la referencia de la celda PU (ej. 'F38').
         """
         descripcion = apu.get("descripcion", "")
@@ -424,10 +552,11 @@ class Constructor:
 
         # ---- Headers de tabla ----
         fill_th = PatternFill(start_color="DDEBF7", end_color="DDEBF7", fill_type="solid")
-        headers_apu = ["Clave", "Insumo", "Unidad", "Cantidad", "Costo unit.", "Importe"]
+        headers_apu = ["Id local", "Insumo", "Unidad", "Cantidad", "Costo unit.", "Importe",
+                       "Clave origen"]
         for i, h in enumerate(headers_apu, 1):
             escribir_celda(ws, 4, i, h, font=font_header_negro, fill=fill_th, alignment=align_center)
-        aplicar_borde(ws, 4, 1, 6)
+        aplicar_borde(ws, 4, 1, 7)
 
         ord_secciones = ["material", "mano_obra", "equipo", "herramienta", "auxiliar", "maquinaria"]
         lbl = {"material": "Materiales", "mano_obra": "Mano de Obra", "equipo": "Equipo",
@@ -454,23 +583,26 @@ class Constructor:
             escribir_celda(ws, fila, 6, f"=SUM(F{fila+1}:F{fila+len(items)})",
                            font=font_seccion, fill=fill_sec,
                            alignment=align_right, number_format="$#,##0.00")
-            aplicar_borde(ws, fila, 1, 6)
+            escribir_celda(ws, fila, 7, "", font=font_seccion, fill=fill_sec, alignment=align_center)
+            aplicar_borde(ws, fila, 1, 7)
             fila_sec = fila
             fila += 1
             for ins in items:
                 iclave = ins.get("clave", "")
-                escribir_celda(ws, fila, 1, iclave, font=font_normal, alignment=align_center)
+                id_local = self._id_local_insumo.get(iclave, iclave)
+                escribir_celda(ws, fila, 1, id_local, font=font_normal, alignment=align_center)
                 escribir_celda(ws, fila, 2, ins.get("descripcion", ""), font=font_normal, alignment=align_left)
                 escribir_celda(ws, fila, 3, ins.get("unidad", ""), font=font_normal, alignment=align_center)
                 escribir_celda(ws, fila, 4, round(float(ins.get("cantidad", 0) or 0), 6),
                                font=font_normal, alignment=align_right, number_format="#,##0.0000")
-                # costo unitario desde Insumos (editable) — recálculo vivo
+                # costo unitario desde Insumos (editable) - recálculo vivo
                 costo_formula = f"=IFERROR(VLOOKUP(A{fila},{rango_ins},{5},FALSE),{float(ins.get('costo',0) or 0)})"
                 escribir_celda(ws, fila, 5, costo_formula, font=font_normal,
                                alignment=align_right, number_format="$#,##0.00")
                 escribir_celda(ws, fila, 6, f"=D{fila}*E{fila}", font=font_negrita,
                                alignment=align_right, number_format="$#,##0.00")
-                aplicar_borde(ws, fila, 1, 6)
+                escribir_celda(ws, fila, 7, iclave, font=font_normal, alignment=align_center)
+                aplicar_borde(ws, fila, 1, 7)
                 fila += 1
             cd_parts.append(f"F{fila_sec}")
 
@@ -517,6 +649,7 @@ class Constructor:
         ws.column_dimensions["D"].width = 12
         ws.column_dimensions["E"].width = 14
         ws.column_dimensions["F"].width = 18
+        ws.column_dimensions["G"].width = 16
         ws.page_setup.orientation = "portrait"
         ws.page_setup.paperSize = ws.PAPERSIZE_LETTER
         ws.page_setup.fitToWidth = 1
@@ -628,9 +761,14 @@ class Constructor:
         iva = getattr(self, "_pres_iva", None)
         gran = getattr(self, "_pres_gran", None)
 
-        # Leer TODOS los conceptos del Presupuesto para mostrar en la Portada
-        ws_pres = self.wb["Presupuesto"]
-        
+        # Tabla de conceptos de la Portada.
+        # Se toma de la ESTRUCTURA registrada al escribir la hoja Presupuesto
+        # (partidas, subpartidas y conceptos). Antes se raspaba la hoja, lo que
+        # arrastraba el pie de totales como si fueran conceptos, duplicaba cada
+        # renglón y copiaba fórmulas relativas que apuntaban a otras filas.
+        estructura = getattr(self, "_estructura_pres", None) or \
+            self._estructura_desde_matcheo(resultados_matcheo or [])
+
         # Encabezados de tabla en Portada (Verde ICEL)
         headers_portada = ["Id", "Concepto", "Unidad", "Cantidad", "P.U.", "Importe"]
         for i, h in enumerate(headers_portada, 1):
@@ -640,33 +778,36 @@ class Constructor:
             cell.border = DNA.border_header_tabla()
             cell.alignment = DNA.align_center_nowrap()
         r += 1
-        
-        # Iterar todas las filas del Presupuesto y copiar conceptos
+
         primera_fila_concepto = None
-        ultima_fila_concepto = None
-        partida_actual = ""
-        for row_idx in range(8, ws_pres.max_row + 1):  # Presupuesto data starts at row 8
-            id_entrada = ws_pres.cell(row=row_idx, column=1).value
-            clave = ws_pres.cell(row=row_idx, column=2).value
-            descripcion = ws_pres.cell(row=row_idx, column=3).value
-            cantidad = ws_pres.cell(row=row_idx, column=4).value
-            unidad = ws_pres.cell(row=row_idx, column=5).value
-            pu = ws_pres.cell(row=row_idx, column=6).value
-            importe = ws_pres.cell(row=row_idx, column=7).value
-            
-            # Saltar filas vacías
-            if not id_entrada:
-                continue
-            
-            # Detectar fila de partida (empieza con "PARTIDA" o es número de partida)
-            es_partida = isinstance(id_entrada, str) and id_entrada.startswith("PARTIDA")
-            es_subtotal = isinstance(id_entrada, str) and id_entrada.isdigit()
-            
-            if es_partida:
-                # Capturar nombre de la partida para el subtotal
-                partida_actual = descripcion or id_entrada
-                # Escribir encabezado de partida
-                merge_y_escribir(ws, f"A{r}:F{r}", f"PARTIDA: {partida_actual}",
+        fila_inicio_partida = None
+        nombre_partida_actual = ""
+
+        def _cerrar_partida():
+            """Escribe el subtotal de la partida actual (suma de la Portada)."""
+            nonlocal r, fila_inicio_partida, nombre_partida_actual
+            if fila_inicio_partida is None or not nombre_partida_actual:
+                return
+            merge_y_escribir(ws, f"B{r}:E{r}", f"Subtotal {nombre_partida_actual}",
+                             font=DNA.font_cuerpo_fallback(bold=True),
+                             alignment=DNA.align_left())
+            escribir_celda(ws, r, 6, f"=SUM(F{fila_inicio_partida}:F{r - 1})",
+                           font=DNA.font_moneda(bold=True),
+                           alignment=DNA.align_right(),
+                           number_format="$#,##0.00")
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+            fila_inicio_partida = None
+            nombre_partida_actual = ""
+            r += 1
+
+        for item in estructura:
+            tipo = item.get("tipo")
+
+            if tipo == "partida":
+                _cerrar_partida()
+                nombre_partida_actual = item.get("nombre", "") or ""
+                merge_y_escribir(ws, f"A{r}:F{r}", f"PARTIDA: {nombre_partida_actual}",
                                  font=DNA.font_partida(),
                                  alignment=DNA.align_left())
                 for col in range(1, 7):
@@ -674,93 +815,62 @@ class Constructor:
                     ws.cell(row=r, column=col).fill = DNA.fill_verde_icel()
                 r += 1
                 continue
-            
-            if es_subtotal and primera_fila_concepto is not None:
-                # Es el subtotal de la partida actual
-                merge_y_escribir(ws, f"B{r}:E{r}", f"Subtotal {partida_actual}",
+
+            if tipo == "subpartida":
+                merge_y_escribir(ws, f"A{r}:F{r}", f"SUBPARTIDA: {item.get('nombre', '')}",
                                  font=DNA.font_cuerpo_fallback(bold=True),
                                  alignment=DNA.align_left())
-                if importe:
-                    escribir_celda(ws, r, 6, importe,
-                                   font=DNA.font_moneda(bold=True),
-                                   alignment=DNA.align_right(),
-                                   number_format="$#,##0.00")
                 for col in range(1, 7):
                     ws.cell(row=r, column=col).border = DNA.border_celda()
+                    ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
                 r += 1
                 continue
-            
-            # Es un concepto normal
+
+            # --- Concepto ---
             if primera_fila_concepto is None:
                 primera_fila_concepto = r
-            
-            escribir_celda(ws, r, 1, id_entrada, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 2, descripcion or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
-            escribir_celda(ws, r, 3, unidad or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 4, cantidad, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
-            
-            # PU: referencia a Presupuesto (que ya referencia APU o catálogo)
+
+            escribir_celda(ws, r, 1, item.get("id") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 2, item.get("descripcion") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
+            escribir_celda(ws, r, 3, item.get("unidad") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+            escribir_celda(ws, r, 4, item.get("cantidad"), font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
+
+            # PU: referencia a la hoja APU (válida desde cualquier hoja) o valor del catálogo
+            pu = item.get("pu")
             if pu is not None:
                 escribir_celda(ws, r, 5, pu,
                                font=DNA.font_moneda(),
                                alignment=DNA.align_right(),
                                number_format="$#,##0.00")
-            
-            # Importe: referencia a Presupuesto
-            if importe is not None:
-                escribir_celda(ws, r, 6, importe,
-                               font=DNA.font_cuerpo_fallback(),
-                               alignment=DNA.align_right(),
-                               number_format="$#,##0.00")
-            
+
+            # Importe: se calcula DENTRO de la Portada. En la Portada el P.U.
+            # está en la columna E (a diferencia del Presupuesto, donde está en
+            # F), así que el importe es =D{r}*E{r}. Copiar "=D8*F8" aquí
+            # produciría una referencia circular (F sería la propia celda).
+            escribir_celda(ws, r, 6, f"=D{r}*E{r}",
+                           font=DNA.font_cuerpo_fallback(),
+                           alignment=DNA.align_right(),
+                           number_format="$#,##0.00")
+
             for col in range(1, 7):
                 ws.cell(row=r, column=col).border = DNA.border_celda()
-            
+
             # Ajustar altura según descripción
+            descripcion = item.get("descripcion")
             if descripcion:
                 lineas = max(1, (len(str(descripcion)) // 60) + 1)
                 ws.row_dimensions[r].height = max(15, lineas * 12.5)
-            
-            ultima_fila_concepto = r
+
+            if fila_inicio_partida is None:
+                fila_inicio_partida = r
             r += 1
-            
-            # Es un concepto normal
-            if primera_fila_concepto is None:
-                primera_fila_concepto = r
-            
-            escribir_celda(ws, r, 1, id_entrada, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 2, descripcion or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
-            escribir_celda(ws, r, 3, unidad or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 4, cantidad, font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
-            
-            # PU: referencia a Presupuesto (que ya referencia APU o catálogo)
-            if pu is not None:
-                escribir_celda(ws, r, 5, pu,
-                               font=DNA.font_moneda(),
-                               alignment=DNA.align_right(),
-                               number_format="$#,##0.00")
-            
-            # Importe: referencia a Presupuesto
-            if importe is not None:
-                escribir_celda(ws, r, 6, importe,
-                               font=DNA.font_cuerpo_fallback(),
-                               alignment=DNA.align_right(),
-                               number_format="$#,##0.00")
-            
-            for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
-            
-            # Ajustar altura según descripción
-            if descripcion:
-                lineas = max(1, (len(str(descripcion)) // 60) + 1)
-                ws.row_dimensions[r].height = max(15, lineas * 12.5)
-            
-            ultima_fila_concepto = r
-            r += 1
-        
+
+        # Subtotal de la última partida
+        _cerrar_partida()
+
         # Si no hay conceptos, fallback a resumen por partidas
-        if primera_fila_concepto is None and partidas:
-            for nombre_part, celda_sub in partidas:
+        if primera_fila_concepto is None:
+            for nombre_part, celda_sub in getattr(self, "_partidas", []):
                 if " | " in nombre_part:
                     num_part, titulo_part = nombre_part.split(" | ", 1)
                 else:
@@ -773,79 +883,81 @@ class Constructor:
                 r += 1
                 escribir_celda(ws, r, 1, "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
                 merge_y_escribir(ws, f"B{r}:E{r}", "Subtotal " + nombre_part,
-                                 font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
+                                 font=DNA.font_cuerpo_fallback(bold=True), alignment=DNA.align_left())
                 escribir_celda(ws, r, 6, f"=Presupuesto!{celda_sub}",
                                font=DNA.font_moneda(bold=True), alignment=DNA.align_right(),
                                number_format="$#,##0.00")
                 for col in range(1, 7):
                     ws.cell(row=r, column=col).border = DNA.border_celda()
                 r += 1
-        
-        fila_fin_suma = r - 1
-
-        fila_fin_suma = r - 1
 
         # --- FASE 3: TOTALES FINANCIEROS ---
         r += 1  # espacio en blanco
 
-        # Subtotal
-        merge_y_escribir(ws, f"A{r}:E{r}", "Subtotal",
-                         font=DNA.font_subtitulo_fallback(),
-                         alignment=DNA.align_right())
-        if sin_iva:
-            escribir_celda(ws, r, 6, f"=Presupuesto!{sin_iva}",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
-                           number_format="$#,##0.00")
-        else:
-            escribir_celda(ws, r, 6, f"=SUM(F{fila_inicio_suma}:F{fila_fin_suma})",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
-                           number_format="$#,##0.00")
-        fila_subtotal = r
-        for col in range(1, 7):
-            ws.cell(row=r, column=col).border = DNA.border_celda()
-        r += 1
+        def _fila_total(etiqueta: str, celda_presupuesto: Optional[str], *,
+                        negrita: bool = False, con_fill: bool = False) -> int:
+            """Escribe una fila del bloque financiero de la Portada.
 
+            Todos los importes se referencian al Presupuesto con el prefijo de
+            hoja ('=Presupuesto!G16'), de modo que no dependan de filas locales.
+            """
+            nonlocal r
+            merge_y_escribir(ws, f"A{r}:E{r}", etiqueta,
+                             font=DNA.font_subtitulo_fallback() if not negrita
+                             else DNA.font_partida(size=12),
+                             alignment=DNA.align_right())
+            if celda_presupuesto:
+                escribir_celda(ws, r, 6, f"=Presupuesto!{celda_presupuesto}",
+                               font=DNA.font_moneda(bold=negrita),
+                               alignment=DNA.align_right(),
+                               number_format="$#,##0.00")
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+                if con_fill:
+                    ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
+            fila = r
+            r += 1
+            return fila
+
+        # Costo directo
+        _fila_total("Costo Directo", cd)
+        # Indirectos
+        _fila_total("Indirectos", ind)
+        # Utilidad
+        _fila_total("Utilidad", util)
+        # Subtotal sin IVA
+        fila_subtotal = _fila_total("Subtotal", sin_iva, negrita=True)
         # I.V.A. (16%)
-        merge_y_escribir(ws, f"A{r}:E{r}", "I.V.A. (16%)",
-                         font=DNA.font_subtitulo_fallback(),
-                         alignment=DNA.align_right())
         if iva:
-            escribir_celda(ws, r, 6, f"=Presupuesto!{iva}",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
-                           number_format="$#,##0.00")
+            fila_iva = _fila_total("I.V.A. (16%)", iva)
         else:
+            fila_iva = r
+            merge_y_escribir(ws, f"A{r}:E{r}", "I.V.A. (16%)",
+                             font=DNA.font_subtitulo_fallback(),
+                             alignment=DNA.align_right())
             escribir_celda(ws, r, 6, f"=F{fila_subtotal}*0.16",
-                           font=DNA.font_moneda(bold=True),
+                           font=DNA.font_moneda(),
                            alignment=DNA.align_right(),
                            number_format="$#,##0.00")
-        fila_iva = r
-        for col in range(1, 7):
-            ws.cell(row=r, column=col).border = DNA.border_celda()
-        r += 1
-
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+            r += 1
         # Total (negrita, resaltado)
-        merge_y_escribir(ws, f"A{r}:E{r}", "Total",
-                         font=DNA.font_partida(size=12),
-                         alignment=DNA.align_right())
         if gran:
-            escribir_celda(ws, r, 6, f"=Presupuesto!{gran}",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
-                           number_format="$#,##0.00")
+            _fila_total("Total", gran, negrita=True, con_fill=True)
         else:
+            merge_y_escribir(ws, f"A{r}:E{r}", "Total",
+                             font=DNA.font_partida(size=12),
+                             alignment=DNA.align_right())
             escribir_celda(ws, r, 6, f"=F{fila_subtotal}+F{fila_iva}",
                            font=DNA.font_moneda(bold=True),
                            alignment=DNA.align_right(),
                            number_format="$#,##0.00")
-        fila_total = r
-        for col in range(1, 7):
-            ws.cell(row=r, column=col).border = DNA.border_celda()
-            # Fondo verde claro para total
-            ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
-        r += 2
+            for col in range(1, 7):
+                ws.cell(row=r, column=col).border = DNA.border_celda()
+                ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
+            r += 1
+        r += 1
 
         # --- FASE 4: CONDICIONES, EXCLUSIONES Y NOTAS ---
         secciones_notas = proyecto.get("secciones_notas", [
@@ -950,6 +1062,9 @@ class Constructor:
             del self.wb["Presupuesto"]
         ws = self.wb.create_sheet("Presupuesto", 0)  # primera hoja
         self._partidas = []
+        # Estructura real escrita (partidas, subpartidas y conceptos) para que la
+        # Portada copie exactamente lo mismo, sin raspar el pie de totales.
+        self._estructura_pres = []
 
         # ---- Paleta ----
         AZUL = "0070C0"
@@ -1088,6 +1203,10 @@ class Constructor:
             aplicar_borde(ws, r, 1, 8)
             fila_partida_header = r
             filas_porcentaje.append((r, True))
+            self._estructura_pres.append({
+                "tipo": "partida", "fila": fila_partida_header,
+                "wbs": wbs_partida, "nombre": partida_nombre,
+            })
             r += 1
 
             # ¿Subpartidas?
@@ -1097,11 +1216,13 @@ class Constructor:
                 primer_concepto = r
                 for res in conceptos_partida:
                     num_concepto += 1
+                    fila_concepto = r
                     if res.get("clave_sugerida") and res.get("estado") in ("confirmado", "dudoso", "confirmado_ia"):
                         r = self._escribir_fila_concepto(ws, r, res, rango_insumos, num_concepto,
                                                          revisar=_es_revisar(res))
                     else:
                         r = self._escribir_fila_sin_match(ws, r, res, num_concepto)
+                    self._registrar_concepto_pres(ws, fila_concepto)
                 ultimo_concepto = r - 1
                 # Subtotal partida en G e importe de la fila de partida
                 escribir_celda(ws, fila_partida_header, 7,
@@ -1134,16 +1255,22 @@ class Constructor:
                     aplicar_borde(ws, r, 1, 8)
                     fila_sub_header = r
                     filas_porcentaje.append((r, False))
+                    self._estructura_pres.append({
+                        "tipo": "subpartida", "fila": fila_sub_header,
+                        "wbs": wbs_sub, "nombre": sub_nombre,
+                    })
                     r += 1
 
                     primer_concepto = r
                     for res in grupos_sub[sub_nombre]:
                         num_concepto += 1
+                        fila_concepto = r
                         if res.get("clave_sugerida") and res.get("estado") in ("confirmado", "dudoso", "confirmado_ia"):
                             r = self._escribir_fila_concepto(ws, r, res, rango_insumos, num_concepto,
                                                              revisar=_es_revisar(res))
                         else:
                             r = self._escribir_fila_sin_match(ws, r, res, num_concepto)
+                        self._registrar_concepto_pres(ws, fila_concepto)
                     ultimo_concepto = r - 1
 
                     escribir_celda(ws, fila_sub_header, 7,
@@ -1245,6 +1372,49 @@ class Constructor:
 
         ws.freeze_panes = f"A{fila_header + 1}"
         self._preparar_impresion(ws)
+
+    def _registrar_concepto_pres(self, ws, fila: int):
+        """Registra en `_estructura_pres` una fila de concepto del Presupuesto.
+
+        La Portada usa esta estructura para copiar partidas/subpartidas/conceptos
+        sin raspar la hoja (lo que arrastraba el pie de totales como si fueran
+        conceptos) y sin duplicar renglones.
+        """
+        self._estructura_pres.append({
+            "tipo": "concepto",
+            "fila": fila,
+            "id": ws.cell(row=fila, column=1).value,
+            "descripcion": ws.cell(row=fila, column=3).value,
+            "cantidad": ws.cell(row=fila, column=4).value,
+            "unidad": ws.cell(row=fila, column=5).value,
+            "pu": ws.cell(row=fila, column=6).value,
+        })
+
+    @staticmethod
+    def _estructura_desde_matcheo(resultados_matcheo: list[dict]) -> list[dict]:
+        """Estructura mínima (partidas + conceptos) si no se escribió el Presupuesto."""
+        estructura: list[dict] = []
+        grupos: dict[str, list[dict]] = {}
+        orden: list[str] = []
+        for res in resultados_matcheo:
+            p = res.get("partida", "GENERAL") or "GENERAL"
+            if p not in grupos:
+                grupos[p] = []
+                orden.append(p)
+            grupos[p].append(res)
+        for p in orden:
+            estructura.append({"tipo": "partida", "fila": None, "nombre": p})
+            for res in grupos[p]:
+                estructura.append({
+                    "tipo": "concepto",
+                    "fila": None,
+                    "id": res.get("id_entrada", ""),
+                    "descripcion": res.get("descripcion_sugerida") or res.get("concepto_entrada", ""),
+                    "cantidad": res.get("cantidad", 0),
+                    "unidad": res.get("unidad_sugerida") or res.get("unidad_entrada", ""),
+                    "pu": res.get("pu_sugerido", 0),
+                })
+        return estructura
 
     def _escribir_fila_concepto(self, ws, r: int, resultado: dict, rango_insumos: str,
                                 num_concepto: int = 0, revisar: bool = False) -> int:
@@ -1465,6 +1635,8 @@ def construir_presupuesto(
     usar_timestamp: bool = False,
     apu_provider=None,
     incluir_revision: bool = False,
+    validar: bool = True,
+    recalcular: bool = True,
 ) -> Path:
     """Construye el presupuesto completo en un solo llamado.
 
@@ -1472,15 +1644,19 @@ def construir_presupuesto(
       1. Copiar plantilla
       2. Variables
       3. Preparar APUs (matrices)
-      4. Insumos (lista de materiales agregada de los APUs)
-      5. Hojas APU (una por concepto con matriz)
-      6. Presupuesto (PU referencia a la hoja APU)
-      7. Guardar
+      4. Cuadrillas (filas locales de las cuadrillas usadas)
+      5. Insumos (lista de materiales agregada de los APUs, con IDs locales)
+      6. Hojas APU (una por concepto con matriz)
+      7. Presupuesto (PU referencia a la hoja APU)
+      8. Portada
+      9. Guardar
+     10. Validar el libro (opcional; si hay errores se copia como
+         presupuesto_con_errores.xlsx)
     """
     c = Constructor(ruta_plantilla, carpeta_salida, usar_timestamp,
                     apu_provider=apu_provider, incluir_revision=incluir_revision)
 
-    print("[1/6] Copiando plantilla...")
+    print("[1/8] Copiando plantilla...")
     c.copiar_plantilla()
 
     # Limpieza: quitar Notas y ocultar hoja-motor de parámetros
@@ -1490,22 +1666,25 @@ def construir_presupuesto(
         if _h in c.wb.sheetnames:
             c.wb[_h].sheet_state = "hidden"
 
-    print("[2/6] Escribiendo Variables...")
+    print("[2/8] Escribiendo Variables...")
     c.escribir_variables(proyecto)
 
-    print("[3/6] Preparando APUs (matrices)...")
+    print("[3/8] Preparando APUs (matrices)...")
     c.preparar_apus(resultados_matcheo)
 
-    print("[4/6] Escribiendo Insumos (materiales)...")
+    print("[4/8] Escribiendo Cuadrillas (IDs locales)...")
+    c.escribir_cuadrillas(resultados_matcheo)
+
+    print("[5/8] Escribiendo Insumos (materiales)...")
     c.escribir_insumos(resultados_matcheo)
 
-    print("[5/6] Creando hojas APU...")
+    print("[6/8] Creando hojas APU...")
     c.crear_hojas_apu(resultados_matcheo)
 
-    print("[6/7] Escribiendo Presupuesto...")
+    print("[7/8] Escribiendo Presupuesto...")
     c.escribir_presupuesto(resultados_matcheo, proyecto)
 
-    print("[7/7] Escribiendo Portada...")
+    print("[8/8] Escribiendo Portada...")
     logo = Path(ruta_plantilla).parent / "logo.png"
     c.escribir_portada(proyecto, str(logo) if logo.exists() else None, resultados_matcheo)
 
@@ -1513,4 +1692,24 @@ def construir_presupuesto(
         c.escribir_revision(resultados_matcheo)
 
     print("\nGuardando...")
-    return c.guardar()
+    ruta = c.guardar()
+
+    # --- Validación de integridad del libro ---
+    if validar:
+        try:
+            from src.validador import validar_libro, formatear_reporte
+            print("\nValidando libro...")
+            reporte = validar_libro(str(ruta), recalcular=recalcular)
+            print(formatear_reporte(reporte))
+            if reporte["errores"]:
+                # Se conserva una copia con errores para depuración
+                ruta_errores = ruta.with_name("presupuesto_con_errores.xlsx")
+                try:
+                    shutil.copy2(ruta, ruta_errores)
+                    print(f"Copia con errores: {ruta_errores}")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[!] No se pudo validar el libro: {e}")
+
+    return ruta
