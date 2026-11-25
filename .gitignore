@@ -1,4 +1,47 @@
-# Archivos de configuración local (no subir a GitHub)
+# ============================================================
+# Secretos y configuración local (NUNCA subir)
+# ============================================================
 secrets.env
 .secrets/
 .env
+*.key
+
+# ============================================================
+# Entornos virtuales
+# ============================================================
+venv/
+.venv/
+env/
+ENV/
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================
+# Salidas generadas (presupuestos, PDFs, temporales)
+# ============================================================
+salidas/
+archivos_temporales/
+*.tmp
+
+# ============================================================
+# Sistema operativo / editores
+# ============================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
