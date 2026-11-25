@@ -1,21 +1,4 @@
-# Python
-venv/
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# Salidas generadas
-salidas/
-
-# La plantilla base SÍ se versiona — se regenera con generar_plantilla.py
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+# Archivos de configuración local (no subir a GitHub)
+secrets.env
+.secrets/
+.env
