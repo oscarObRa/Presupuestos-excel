@@ -41,11 +41,20 @@ CATALOGO = [
 ]
 
 # APU de prueba para CAT-002 (materiales + una cuadrilla)
+# Los campos de trazabilidad del precio reproducen el modelo canonico de
+# costos: `pu_oficial` es el PU que manda (publicado > APU > manual) y
+# `pu_apu` es el que calcula el APU.
 APU_CAT002 = {
     "clave": "CAT-002",
     "descripcion": "Muro de block hueco de concreto 15x20x40cm",
     "unidad": "M2",
     "pu": 350.0,
+    "pu_oficial": 350.0,
+    "pu_apu": 372.5,
+    "origen_precio": "publicado",
+    "diferencia_publicado_apu": 22.5,
+    "costo_directo": 2004.56,
+    "fuente": "canonica",
     "insumos": [
         {"tipo": "material", "clave": "MAT-001",
          "descripcion": "Block de concreto 15x20x40", "unidad": "PZA",
@@ -113,7 +122,11 @@ class ClienteFake:
 
 
 class APUFake:
-    """Proveedor de APUs mínimo para el constructor."""
+    """Proveedor de APUs mínimo para el constructor.
+
+    Reproduce el contrato del proveedor canonico: `apu_de()` devuelve el
+    desglose y la trazabilidad del precio, y `concepto()` el PU oficial.
+    """
 
     def __init__(self, apus=None):
         self._apus = dict(apus or {"CAT-002": APU_CAT002})
@@ -123,7 +136,29 @@ class APUFake:
         return True
 
     def apu_de(self, clave, paquete=None):
-        return self._apus.get(clave)
+        a = self._apus.get(clave)
+        if a is None:
+            return None
+        a = dict(a)
+        a.setdefault("pu_oficial", a.get("pu"))
+        a.setdefault("pu_apu", a.get("pu"))
+        a.setdefault("origen_precio", "manual")
+        a.setdefault("diferencia_publicado_apu", 0.0)
+        a.setdefault("fuente", "canonica")
+        return a
+
+    def concepto(self, clave):
+        a = self._apus.get(clave)
+        if not a:
+            return None
+        return {
+            "clave": clave,
+            "precio_unitario": a.get("pu_oficial", a.get("pu")),
+            "precio_unitario_apu": a.get("pu_apu", a.get("pu")),
+            "origen_precio": a.get("origen_precio", "manual"),
+            "diferencia_publicado_apu": a.get("diferencia_publicado_apu", 0.0),
+            "apu_id": 1 if a.get("insumos") else None,
+        }
 
     def cargar_indice(self):
         return len(self._apus)
@@ -136,7 +171,8 @@ def matcher_de_prueba(cliente=None, **kwargs):
 
 
 def construir_de_prueba(carpeta_salida, validar=False, recalcular=False,
-                        entrada=None, apus=None):
+                        entrada=None, apus=None, incluir_revision=False,
+                        usar_pu_oficial=True):
     """Construye un presupuesto de prueba y devuelve (ruta, resultados, matcher)."""
     from src.constructor import construir_presupuesto
 
@@ -150,8 +186,9 @@ def construir_de_prueba(carpeta_salida, validar=False, recalcular=False,
         carpeta_salida=str(carpeta_salida),
         usar_timestamp=False,
         apu_provider=APUFake(apus),
-        incluir_revision=False,
+        incluir_revision=incluir_revision,
         validar=validar,
         recalcular=recalcular,
+        usar_pu_oficial=usar_pu_oficial,
     )
     return ruta, resultados, matcher

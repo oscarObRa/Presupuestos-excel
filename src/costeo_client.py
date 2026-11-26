@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -126,8 +127,46 @@ def descubrir_repo_costeo(inicio: Optional[str | Path] = None,
     return mejor[0]
 
 
+def _snapshot_contrato(repo: Path) -> Optional[Path]:
+    """Paquete publicado `dist/contrato_costos/<version>/catalogo_costos.json`.
+
+    Es el artefacto que el contrato entrega al consumidor (con su manifest y
+    sha256), así que se prefiere sobre el JSON de trabajo del repo.
+    """
+    dist = repo / "dist" / "contrato_costos"
+    if not dist.is_dir():
+        return None
+    versiones = []
+    for d in dist.iterdir():
+        j = d / "catalogo_costos.json"
+        if d.is_dir() and j.exists():
+            partes = []
+            for p in str(d.name).replace("-", ".").split("."):
+                try:
+                    partes.append(int(p))
+                except ValueError:
+                    partes.append(0)
+            versiones.append((tuple(partes), j))
+    if not versiones:
+        return None
+    versiones.sort(key=lambda t: t[0], reverse=True)
+    return versiones[0][1]
+
+
 def ruta_indice(repo: Path) -> Optional[Path]:
-    """Devuelve la ruta al catalogo_costos.json dentro del repo."""
+    """Devuelve la ruta al catalogo_costos.json que se debe consumir.
+
+    Prioridad: variable `PONTEM_COSTOS_JSON` -> paquete publicado
+    (`dist/contrato_costos/<version>/`) -> JSON de trabajo del repo.
+    """
+    env = os.environ.get("PONTEM_COSTOS_JSON")
+    if env and Path(env).exists():
+        return Path(env)
+
+    snapshot = _snapshot_contrato(repo)
+    if snapshot:
+        return snapshot
+
     for cand in [
         repo / "costos_unitarios" / "catalogo_costos.json",
         repo / "catalogo_costos.json",
@@ -208,6 +247,16 @@ class ClienteCosteo:
         if self.nivel == 1:
             return f"Nivel 1 — lectura directa del JSON en {self.indice_path}"
         return "No disponible"
+
+    @property
+    def es_paquete_publicado(self) -> bool:
+        """True si el JSON viene del paquete publicado (dist/contrato_costos)."""
+        if self.indice_path is None:
+            return False
+        try:
+            return "contrato_costos" in self.indice_path.parts
+        except Exception:
+            return False
 
     # -- búsqueda -------------------------------------------------------
     def buscar(self, texto: str, limite: int = 20,

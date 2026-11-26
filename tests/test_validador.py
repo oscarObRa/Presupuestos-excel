@@ -240,6 +240,47 @@ def test_detecta_cuadrilla_en_cero():
               f"el error menciona la cuadrilla en $0 ({rep['errores'][:2]})")
 
 
+def test_avisa_pu_distinto_del_oficial():
+    print("\n11. Avisa cuando el PU cotizado difiere del oficial del catálogo")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta = _libro_limpio(tmp)
+        import src.validador as V
+
+        # Simular la BD canónica: el catálogo oficial de CAT-002 es 500 y el
+        # libro cotiza 350.
+        original = V._pu_oficiales
+        V._pu_oficiales = lambda: {"CAT-002": (500.0, "publicado")}
+        try:
+            rep = V.validar_libro(str(ruta), recalcular=False)
+        finally:
+            V._pu_oficiales = original
+
+        check(rep["ok"], "no es un error: el libro es íntegro")
+        avisos = rep["advertencias"]
+        check(any("PU cotizado" in a for a in avisos),
+              f"se avisó del PU divergente ({avisos[:2]})")
+        check(any("$500.00" in a and "$350.00" in a for a in avisos),
+              f"el aviso muestra ambos precios ({avisos[:2]})")
+        check(any("impacto" in a and "30,000" in a for a in avisos),
+              f"el aviso quantify el impacto en dinero ({avisos[:2]})")
+
+
+def test_no_avisa_si_pu_coincide():
+    print("\n12. No avisa cuando el PU cotizado coincide con el oficial")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta = _libro_limpio(tmp)
+        import src.validador as V
+
+        original = V._pu_oficiales
+        V._pu_oficiales = lambda: {"CAT-002": (350.0, "publicado")}
+        try:
+            rep = V.validar_libro(str(ruta), recalcular=False)
+        finally:
+            V._pu_oficiales = original
+        check(not any("PU cotizado" in a for a in rep["advertencias"]),
+              f"no hay aviso de divergencia ({rep['advertencias'][:2]})")
+
+
 def main():
     print("=== PRUEBAS DEL VALIDADOR ===")
     test_libro_limpio_pasa()
@@ -253,6 +294,8 @@ def main():
     test_cuadre_de_totales_con_excel()
     test_detecta_tabla_portada_descuadrada()
     test_detecta_cuadrilla_en_cero()
+    test_avisa_pu_distinto_del_oficial()
+    test_no_avisa_si_pu_coincide()
 
     print("\n" + "=" * 50)
     if FALLOS:

@@ -203,6 +203,101 @@ def test_cuadrillas_registradas_con_id_local():
         wb.close()
 
 
+def test_pu_oficial_se_cotiza():
+    print("\n9. El PU cotizado es el oficial del modelo canónico")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta, _, _ = construir_de_prueba(tmp)
+        wb = openpyxl.load_workbook(ruta)
+        ws = wb["Presupuesto"]
+        # CAT-002: PU oficial 350, PU del APU 372.5 -> debe cotizar 350
+        fila = None
+        for r, _id in _filas_por_id(ws):
+            if ws.cell(row=r, column=2).value == "CAT-002":
+                fila = r
+                break
+        check(fila is not None, "el concepto CAT-002 está en el Presupuesto")
+        if fila:
+            pu = ws.cell(row=fila, column=6).value
+            check(isinstance(pu, (int, float)), f"el PU es un valor (no fórmula): {pu!r}")
+            check(abs(float(pu) - 350.0) < 0.01,
+                  f"el PU cotizado es el oficial (350), no el del APU (372.5): {pu}")
+        wb.close()
+
+
+def test_modo_cotizar_apu():
+    print("\n10. Con usar_pu_oficial=False se cotiza el PU de la hoja APU")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta, _, _ = construir_de_prueba(tmp, usar_pu_oficial=False)
+        wb = openpyxl.load_workbook(ruta)
+        ws = wb["Presupuesto"]
+        fila = None
+        for r, _id in _filas_por_id(ws):
+            if ws.cell(row=r, column=2).value == "CAT-002":
+                fila = r
+                break
+        check(fila is not None, "el concepto CAT-002 está en el Presupuesto")
+        if fila:
+            pu = ws.cell(row=fila, column=6).value
+            check(isinstance(pu, str) and pu.startswith("="),
+                  f"el PU es una referencia a la hoja APU: {pu!r}")
+            check("'CIM-02'" in pu or "CIM-02" in pu,
+                  f"la referencia apunta a la hoja APU del concepto: {pu}")
+        wb.close()
+
+
+def test_revision_muestra_trazabilidad_del_precio():
+    print("\n11. La Revisión muestra PU oficial, PU APU, diferencia, origen y fuente")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta, _, _ = construir_de_prueba(tmp, incluir_revision=True)
+        wb = openpyxl.load_workbook(ruta)
+        ws = wb["Revision"]
+        headers = [ws.cell(row=4, column=c).value for c in range(1, ws.max_column + 1)]
+        for h in ("PU oficial", "PU APU", "Dif. %", "Origen precio", "Fuente desglose"):
+            check(h in headers, f"existe la columna '{h}': {headers}")
+
+        fila = None
+        for r in range(5, ws.max_row + 1):
+            if ws.cell(row=r, column=5).value == "CAT-002":
+                fila = r
+                break
+        check(fila is not None, "CAT-002 aparece en la Revisión")
+        if fila:
+            pu_of = ws.cell(row=fila, column=11).value
+            pu_apu = ws.cell(row=fila, column=12).value
+            dif = ws.cell(row=fila, column=13).value
+            origen = ws.cell(row=fila, column=14).value
+            fuente = ws.cell(row=fila, column=15).value
+            check(abs(float(pu_of) - 350.0) < 0.01, f"PU oficial = 350: {pu_of}")
+            check(abs(float(pu_apu) - 372.5) < 0.01, f"PU APU = 372.5: {pu_apu}")
+            check(abs(float(dif) - (372.5 - 350.0) / 350.0) < 1e-6,
+                  f"la diferencia % está calculada: {dif}")
+            check(origen == "publicado", f"el origen del precio es 'publicado': {origen}")
+            check(fuente == "canonica", f"la fuente del desglose es 'canonica': {fuente}")
+        wb.close()
+
+
+def test_hoja_apu_muestra_pu_oficial():
+    print("\n12. La hoja APU muestra el PU oficial junto al PU de venta")
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta, _, _ = construir_de_prueba(tmp)
+        wb = openpyxl.load_workbook(ruta)
+        ws = wb["CIM-02"]
+        etiquetas = {}
+        for r in range(1, ws.max_row + 1):
+            for c in (3, 4, 5):
+                v = ws.cell(row=r, column=c).value
+                if isinstance(v, str) and v.strip() in ("PU DE VENTA", "PU OFICIAL (CATALOGO)"):
+                    etiquetas[v.strip()] = r
+        check("PU DE VENTA" in etiquetas, "la hoja APU tiene 'PU DE VENTA'")
+        check("PU OFICIAL (CATALOGO)" in etiquetas,
+              f"la hoja APU tiene 'PU OFICIAL (CATALOGO)': {etiquetas}")
+        if "PU OFICIAL (CATALOGO)" in etiquetas:
+            r = etiquetas["PU OFICIAL (CATALOGO)"]
+            pu = ws.cell(row=r, column=6).value
+            check(abs(float(pu) - 350.0) < 0.01, f"el PU oficial vale 350: {pu}")
+        wb.close()
+
+
 def main():
     print("=== PRUEBAS DE CONSTRUCTOR ===")
     test_portada_sin_duplicados()
@@ -213,6 +308,10 @@ def main():
     test_validacion_sin_errores()
     test_ids_locales_en_insumos_y_apu()
     test_cuadrillas_registradas_con_id_local()
+    test_pu_oficial_se_cotiza()
+    test_modo_cotizar_apu()
+    test_revision_muestra_trazabilidad_del_precio()
+    test_hoja_apu_muestra_pu_oficial()
 
     print("\n" + "=" * 50)
     if FALLOS:

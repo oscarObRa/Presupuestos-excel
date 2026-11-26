@@ -14,6 +14,8 @@ Ejecuta las verificaciones que anuncia el README:
  6. Sintaxis válida de las fórmulas (paréntesis balanceados, sin #REF!).
  7. Cuadre de totales (cadena de fórmulas + recálculo con Excel si existe).
  8. Ninguna cuadrilla queda en $0 (el IFERROR del VLOOKUP lo ocultaría).
+ 9. El PU cotizado coincide con el PU oficial del catálogo (advertencia con el
+    impacto en dinero cuando difiere; se omite si la BD canónica no está).
 
 Uso:
     from src.validador import validar_libro
@@ -319,6 +321,23 @@ def _check_categorias(wb) -> list[str]:
     return errores
 
 
+def _hoja_apu_por_id(wb, id_entrada: str) -> Optional[str]:
+    """Hoja APU que corresponde a un id de entrada.
+
+    El encabezado C1 de cada hoja APU guarda el id de entrada (ej. CIM-02),
+    asi que se puede localizar aunque el PU del Presupuesto sea un valor
+    (PU oficial del catalogo) y no una referencia a la hoja.
+    """
+    if not id_entrada:
+        return None
+    objetivo = str(id_entrada).strip()
+    for nombre in _hojas_apu(wb):
+        v = wb[nombre].cell(row=1, column=3).value
+        if isinstance(v, str) and v.strip() == objetivo:
+            return nombre
+    return None
+
+
 def _check_unidades(wb) -> list[str]:
     """Check 4: unidades consistentes entre Presupuesto, APU e Insumos."""
     errores = []
@@ -328,13 +347,16 @@ def _check_unidades(wb) -> list[str]:
         for r in _filas_concepto_presupuesto(ws):
             uni_pres = ws.cell(row=r, column=5).value
             pu = ws.cell(row=r, column=6).value
-            if not _es_formula(pu):
-                continue
-            m = re.search(r"'([^']+)'!\$?[A-Z]{1,2}\$?\d+", pu)
-            if not m:
-                continue
-            hoja_apu = m.group(1)
-            if hoja_apu not in wb.sheetnames:
+            hoja_apu = None
+            if _es_formula(pu):
+                m = re.search(r"'([^']+)'!\$?[A-Z]{1,2}\$?\d+", pu)
+                if m:
+                    hoja_apu = m.group(1)
+            else:
+                # PU oficial (valor): la hoja APU se localiza por el id de
+                # entrada de la fila (columna A)
+                hoja_apu = _hoja_apu_por_id(wb, ws.cell(row=r, column=1).value)
+            if not hoja_apu or hoja_apu not in wb.sheetnames:
                 continue
             uni_apu = wb[hoja_apu].cell(row=2, column=2).value
             if not uni_pres or not uni_apu:
@@ -484,6 +506,85 @@ def _check_totales_estructura(wb) -> list[str]:
     return errores
 
 
+def _pu_oficiales() -> Optional[dict]:
+    """PU oficial por clave, desde la BD canonica de costos.
+
+    Devuelve None si la canonica no esta disponible: el check se omite y no
+    se vuelve un error (los tests son autocontenidos).
+    """
+    try:
+        from src.apu_db import _descubrir_db
+        db = _descubrir_db()
+    except Exception:
+        db = None
+    if not db or not Path(db).exists():
+        return None
+    try:
+        import sqlite3
+        con = sqlite3.connect(Path(db).as_uri() + "?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        filas = con.execute(
+            "SELECT clave, precio_unitario, origen_precio FROM v_concepto_pu").fetchall()
+        con.close()
+    except Exception:
+        return None
+    return {r["clave"]: (r["precio_unitario"], r["origen_precio"]) for r in filas}
+
+
+def _check_pu_oficial(wb, valores: Optional[dict]) -> list[str]:
+    """Check 9: el PU cotizado debe coincidir con el oficial del catalogo.
+
+    El modelo canonico define la prioridad (publicado > APU > manual). Si el
+    libro cotiza otra cosa, se reporta como ADVERTENCIA con el impacto en
+    dinero: cotizar el APU recalculado es legitimo, pero no puede quedar
+    oculto.
+    """
+    oficiales = _pu_oficiales()
+    if not oficiales:
+        return []
+    if "Presupuesto" not in wb.sheetnames:
+        return []
+    v = (valores or {}).get("Presupuesto", {})
+    ws = wb["Presupuesto"]
+
+    advertencias = []
+    for r in _filas_concepto_presupuesto(ws):
+        clave = ws.cell(row=r, column=2).value
+        if not isinstance(clave, str) or not clave.strip():
+            continue
+        oficial = oficiales.get(clave.strip())
+        if not oficial:
+            continue
+        pu_oficial, origen = oficial
+        if pu_oficial is None:
+            continue
+        pu_oficial = float(pu_oficial)
+        if pu_oficial <= 0:
+            continue
+
+        celda_pu = ws.cell(row=r, column=6).value
+        if _es_formula(celda_pu):
+            pu_cot = v.get(f"F{r}")
+        else:
+            pu_cot = celda_pu
+        if not isinstance(pu_cot, (int, float)):
+            continue
+        pu_cot = float(pu_cot)
+        if abs(pu_cot - pu_oficial) <= max(0.01, pu_oficial * 0.01):
+            continue
+
+        cantidad = ws.cell(row=r, column=4).value
+        impacto = ""
+        if isinstance(cantidad, (int, float)):
+            impacto = f"; impacto ${(pu_cot - pu_oficial) * float(cantidad):,.2f}"
+        dif_pct = (pu_cot - pu_oficial) / pu_oficial
+        advertencias.append(
+            f"Presupuesto!F{r}: el PU cotizado (${pu_cot:,.2f}) difiere del oficial "
+            f"del catálogo (${pu_oficial:,.2f}, origen={origen}) en {dif_pct:+.1%}{impacto}"
+        )
+    return advertencias
+
+
 def _check_totales_valores(wb, valores: Optional[dict]) -> tuple[list[str], list[str]]:
     """Check 7 (valores): cuadre aritmético con el libro recalculado."""
     if not valores:
@@ -631,28 +732,33 @@ def validar_libro(ruta_xlsx: str, recalcular: bool = True) -> dict:
             destino.extend(f"{nombre}: {e}" for e in errores)
 
     try:
-        _registrar("1/8 Claves de VLOOKUP existentes en Insumos/Cuadrillas",
+        _registrar("1/9 Claves de VLOOKUP existentes en Insumos/Cuadrillas",
                    _check_vlookups(wb))
-        _registrar("2/8 Claves de las hojas APU existentes en Insumos",
+        _registrar("2/9 Claves de las hojas APU existentes en Insumos",
                    _check_apu_claves(wb))
-        _registrar("2b/8 IDs locales de Insumos únicos",
+        _registrar("2b/9 IDs locales de Insumos únicos",
                    _check_ids_locales(wb))
-        _registrar("3/8 Categorías de Cuadrillas existentes en Calculo_categoria",
+        _registrar("3/9 Categorías de Cuadrillas existentes en Calculo_categoria",
                    _check_categorias(wb))
-        _registrar("4/8 Consistencia de unidades (Presupuesto / APU / Insumos)",
+        _registrar("4/9 Consistencia de unidades (Presupuesto / APU / Insumos)",
                    _check_unidades(wb))
-        _registrar("5/8 Sin ciclos de referencia entre hojas",
+        _registrar("5/9 Sin ciclos de referencia entre hojas",
                    _check_ciclos(wb))
-        _registrar("6/8 Sintaxis válida de las fórmulas",
+        _registrar("6/9 Sintaxis válida de las fórmulas",
                    _check_formulas(wb))
-        _registrar("7/8 Cadena de totales correctamente conectada",
+        _registrar("7/9 Cadena de totales correctamente conectada",
                    _check_totales_estructura(wb))
 
         valores = _recalcular_excel(ruta) if recalcular else None
         errores_val, advertencias_val = _check_totales_valores(wb, valores)
-        _registrar("8/8 Cuadre de totales (valores recalculados)",
+        _registrar("8/9 Cuadre de totales (valores recalculados)",
                    errores_val)
         reporte["advertencias"].extend(advertencias_val)
+
+        # 9: el PU cotizado debe coincidir con el oficial del catálogo.
+        # Si la BD canónica no está disponible, el check se omite.
+        _registrar("9/9 PU cotizado = PU oficial del catálogo",
+                   _check_pu_oficial(wb, valores), nivel="advertencia")
     except Exception as e:  # el validador nunca debe tumbar la construcción
         reporte["errores"].append(f"Error inesperado en la validación: {e}")
     finally:

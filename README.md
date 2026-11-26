@@ -35,13 +35,13 @@ El resultado es un libro de Excel autocontenido, con dependencias encadenadas en
 
 | Hoja | Contenido |
 |---|---|
-| **Presupuesto** | Partidas con conceptos, cantidades, PU e importes. Fórmulas `VLOOKUP` hacia `Insumos` y `APU_<clave>`. Totales con indirectos, utilidad e IVA. |
+| **Presupuesto** | Partidas con conceptos, cantidades, PU e importes. El PU es el **oficial del catálogo** (por defecto) o el de la hoja APU (modo `--cotizar-apu`). Totales con indirectos, utilidad e IVA. |
 | **Variables** | Parámetros globales editables: UMA, indirectos, utilidad, IVA, ISN, días de trabajo, rendimiento default. |
 | **Insumos** | Tabla maestra única: materiales, equipo, herramienta, cuadrillas, categorías y conceptos del repo. Columna de costo como valor editable o fórmula según el tipo. |
 | **Categorías** | Cálculo FASAR de costos por categoría de mano de obra, ligado a `Variables`. |
 | **Cuadrillas** | Composición de cuadrillas (categorías + cantidades) y su $/jornal calculado con fórmulas. |
-| **APU_\<clave\>** | Desglose completo de cada concepto seleccionado: insumos, cantidades, desperdicio, importe y costo directo. |
-| **Revisión** | Resultado del matcheo: clave sugerida, score, método, estado y columna para marcar desglose de APU. |
+| **APU_\<id\>** | Desglose completo de cada concepto: insumos, cantidades, desperdicio, importe, costo directo, `PU DE VENTA` y `PU OFICIAL (CATALOGO)`. |
+| **Revisión** | Resultado del matcheo: clave sugerida, score, método, estado, columna para marcar desglose de APU y la **trazabilidad del precio**: `PU oficial`, `PU APU`, `Dif. %`, `Origen precio`, `Fuente desglose`. |
 
 ### Dependencias entre hojas
 
@@ -266,11 +266,50 @@ Si pasas una carpeta, busca los `.xlsx` dentro y te deja elegir.
 
 ### Cómo se buscan los precios (consumo por contrato)
 
-El presupuestador **consume el repo de costos según el contrato** documentado en [`docs/consumo-costos.md`](docs/consumo-costos.md):
+El presupuestador **consume el repo de costos por su superficie pública**, tal
+como define el contrato v1.2 del repo de costeos
+([`LEEME.md` del paquete publicado](https://github.com/pontem-dev/costeo) →
+*"El consumidor se ata al artefacto, no al interior del repo Costos. No leas
+Excel, carpetas fuente ni tablas internas"*).
 
-1. **Descubre el repo entre carpetas hermanas** automáticamente, priorizando el que tiene `buscador_costos.py` y `costos_unitarios/catalogo_costos.json` (por ejemplo `C:\Pontem_dev\costeo`). Excluye la propia carpeta de la app.
-2. **Nivel 3 — buscador oficial:** si existe `buscador_costos.py`, lo importa y usa su función `buscar()` como fuente de candidatos. Si no, cae a **Nivel 1** (lectura directa del JSON). La app muestra qué nivel usó.
-3. Cada concepto de entrada se **re-rankea** con: normalización, stopwords, filtro/penalización por unidad y cobertura ponderada por rareza (IDF).
+| Superficie | Para qué la usa el presupuestador | Dónde |
+|---|---|---|
+| `catalogo_costos.json` | clave → precio unitario (nivel 1) | `costos_unitarios/catalogo_costos.json` o el paquete publicado `dist/contrato_costos/<versión>/` |
+| `buscador_costos.py` | búsqueda de candidatos (nivel 3) | raíz del repo de costos |
+| `costos_canonico.db` (read-only) | APU, rendimientos, costo horario, origen del precio | `dist/contrato_costos/<versión>/costos_canonico.db` |
+| `v_concepto_pu` | **el PU que manda** y su origen | vista pública |
+| `v_apu_resumen` / `v_apu_linea_costo` | desglose del APU valuado (cantidad o rendimiento) | vistas públicas |
+
+Reglas que respeta el código:
+
+- La BD canónica se abre **read-only** (`?mode=ro`) y solo se consultan **vistas
+  públicas**; nunca tablas internas.
+- **No** se leen los Excel de `PU2026/` ni las tablas planas de `costos.db`.
+- Se respeta la **prioridad del PU del modelo canónico**:
+  `publicado > APU > manual`. Es decir, el PU cotizado es
+  `v_concepto_pu.precio_unitario`.
+- Si la canónica no trae el APU de un concepto, el **desglose** se completa con
+  el índice de matrices (fuente *no contractual*): la hoja Revisión lo marca
+  como `matrices` y el PU sigue siendo el oficial. Se desactiva con
+  `PONTEM_COSTOS_SIN_MATRICES=1`.
+
+Variables de entorno:
+
+| Variable | Para qué |
+|---|---|
+| `PONTEM_COSTOS_DB` | ruta exacta de la BD canónica (snapshot o BD viva) |
+| `PONTEM_COSTOS_JSON` | ruta exacta del catálogo JSON |
+| `PONTEM_COSTOS_SIN_MATRICES` | `1` desactiva el fallback de matrices |
+
+**Cómo se busca y decide cada concepto:**
+
+1. **Descubre el repo entre carpetas hermanas** automáticamente, priorizando el
+   que tiene `buscador_costos.py` y el catálogo. Excluye la propia carpeta.
+2. **Nivel 3 — buscador oficial:** si existe `buscador_costos.py`, lo importa y
+   usa su función `buscar()` como fuente de candidatos. Si no, cae a
+   **Nivel 1** (lectura directa del JSON). La app muestra qué nivel usó.
+3. Cada concepto de entrada se **re-rankea** con: normalización, stopwords,
+   filtro/penalización por unidad y cobertura ponderada por rareza (IDF).
 4. Resultado por concepto:
    - **confirmado** — score ≥ umbral (por defecto 55). Precio tomado del catálogo.
    - **dudoso** — score entre el piso (40) y el umbral. Precio del catálogo pero **revisar**.
@@ -279,6 +318,29 @@ El presupuestador **consume el repo de costos según el contrato** documentado e
 6. **Nada se pierde:** el `Presupuesto` incluye todos los conceptos. Las filas rojas son las que debes completar en la hoja `Revisión`.
 
 > Puedes forzar un repo específico pasando su ruta como `repo_path` (app web) o editando la ruta en la CLI.
+
+### Qué PU se cotiza (oficial vs. APU)
+
+El modelo canónico de costos define que **manda el PU publicado** mientras el
+APU no esté validado. El presupuesto lo respeta:
+
+| Modo | PU cotizado | Cuándo usarlo |
+|---|---|---|
+| **Por defecto** | `v_concepto_pu.precio_unitario` (el oficial del catálogo) | Cotizar igual que el catálogo oficial |
+| `--cotizar-apu` (CLI) / checkbox en la app | el PU que recalcula la hoja APU | Quiero que editar la hoja `Insumos` mueva el total |
+
+En **ambos** modos la diferencia queda a la vista:
+
+- La hoja **Revisión** trae `PU oficial`, `PU APU`, `Dif. %`, `Origen precio` y
+  `Fuente desglose` (resaltada si el desglose no vino de la canónica).
+- Cada hoja **APU** muestra el `PU DE VENTA` (recalculado) y el
+  `PU OFICIAL (CATALOGO)` uno debajo.
+- El **validador** (check 9/9) avisa cuando el PU cotizado difiere del oficial,
+  con el impacto en dinero.
+
+> Ejemplo real: `10401-172` tiene PU oficial **$52.97** y su APU calcula
+> **$607.72** (+1047%). Con el modo oficial se cotiza $52.97; la diferencia
+> queda registrada en la Revisión y en la hoja APU.
 
 ### IA para conceptos dudosos (opcional)
 
@@ -375,6 +437,9 @@ resultado en la salida de la CLI. Las verificaciones son:
 8. Ninguna cuadrilla queda en `$0` (el `IFERROR` del VLOOKUP lo ocultaría y el
    presupuesto quedaría subvaluado) y la tabla de la Portada suma el Costo
    Directo del Presupuesto.
+9. El **PU cotizado coincide con el PU oficial del catálogo**: si difiere, se
+   reporta como advertencia con el impacto en dinero (se omite si la BD
+   canónica no está disponible).
 
 Si el libro tiene errores, además se guarda una copia como
 `presupuesto_con_errores.xlsx` en la misma carpeta para depuración.

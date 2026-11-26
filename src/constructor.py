@@ -59,12 +59,18 @@ class Constructor:
 
     def __init__(self, ruta_plantilla: str, carpeta_salida: str = "salidas",
                  usar_timestamp: bool = False, apu_provider=None,
-                 incluir_revision: bool = False):
+                 incluir_revision: bool = False,
+                 usar_pu_oficial: bool = True):
         self.ruta_plantilla = Path(ruta_plantilla)
         self.carpeta_salida = Path(carpeta_salida)
         self.usar_timestamp = usar_timestamp
         self.apu_provider = apu_provider
         self.incluir_revision = incluir_revision
+        # Regla del modelo canonico de costos: mientras exista un PU publicado,
+        # el PU que manda es `v_concepto_pu.precio_unitario` (publicado > APU >
+        # manual). Con usar_pu_oficial=False se cotiza el PU recalculado por la
+        # hoja APU (recalculo vivo al editar Insumos).
+        self.usar_pu_oficial = usar_pu_oficial
         self.wb: Optional[openpyxl.Workbook] = None
         self.ruta_salida: Optional[Path] = None
         self.timestamp: str = ""
@@ -196,6 +202,54 @@ class Constructor:
             nombre = base[:31 - len(suf)] + suf
             i += 1
         return nombre
+
+    def _meta_precio(self, resultado: dict) -> dict:
+        """Trazabilidad del precio de un concepto.
+
+        Devuelve: pu_oficial, pu_apu, origen_precio, diferencia y la fuente del
+        desglose (canonica / matrices). Es la fila que se muestra en la hoja
+        Revision para que la diferencia entre el PU publicado y el calculado
+        por el APU quede a la vista.
+        """
+        vacio = {"pu_oficial": None, "pu_apu": None, "origen": "",
+                 "diferencia": None, "fuente": ""}
+        id_entrada = resultado.get("id_entrada", "")
+        clave = resultado.get("clave_sugerida")
+
+        apu = self.apu_por_clave.get(id_entrada)
+        if apu:
+            return {
+                "pu_oficial": apu.get("pu_oficial"),
+                "pu_apu": apu.get("pu_apu"),
+                "origen": apu.get("origen_precio") or "",
+                "diferencia": apu.get("diferencia_publicado_apu"),
+                "fuente": apu.get("fuente") or "",
+            }
+
+        if self.apu_provider is not None and clave:
+            try:
+                c = self.apu_provider.concepto(clave)
+            except Exception:
+                c = None
+            if c:
+                return {
+                    "pu_oficial": c.get("precio_unitario"),
+                    "pu_apu": c.get("precio_unitario_apu"),
+                    "origen": c.get("origen_precio") or "",
+                    "diferencia": c.get("diferencia_publicado_apu"),
+                    "fuente": "canonica" if c.get("apu_id") else "",
+                }
+
+        # Sin fuente consultable: el PU del catálogo es el oficial
+        return {**vacio, "pu_oficial": resultado.get("pu_sugerido")}
+
+    def _pu_oficial(self, id_entrada: str, resultado: dict) -> float:
+        """PU que manda segun el modelo canonico (publicado > APU > manual)."""
+        apu = self.apu_por_clave.get(id_entrada) or {}
+        pu = apu.get("pu_oficial")
+        if pu is None or float(pu) <= 0:
+            pu = resultado.get("pu_sugerido") or 0
+        return round(float(pu), 4)
 
     def _agregar_insumos(self, resultados_matcheo: list[dict]) -> dict[str, dict]:
         """Agrega los insumos de todos los APUs por clave de la fuente general.
@@ -421,7 +475,11 @@ class Constructor:
         ws = self.wb.create_sheet("Revision")
 
         tiene_ia = any(r.get("clave_ia") or r.get("motivo_ia") for r in resultados_matcheo)
-        n_cols = 13 if tiene_ia else 10
+        # Trazabilidad del precio: el modelo canonico define la prioridad
+        # (publicado > APU > manual). Se muestra el PU oficial, el PU que
+        # calcula el APU y la diferencia, para que no quede oculta.
+        n_cols = 15 if tiene_ia else 10
+        n_cols += 5
 
         merge_y_escribir(ws, f"A1:{col_letra(n_cols)}1", "REVISIÓN DE MATCHEO — Confirmar antes de construir",
                          font=font_titulo_blanco, fill=fill_azul_oscuro, alignment=align_center)
@@ -429,14 +487,17 @@ class Constructor:
             ws.cell(row=1, column=c).fill = fill_azul_oscuro
 
         merge_y_escribir(ws, f"A2:{col_letra(n_cols)}2",
-                         "Edita 'Estado' (confirmado/dudoso/sin_match) y 'Desglosar APU' (S/N). Luego re-ejecuta.",
+                         "Edita 'Estado' (confirmado/dudoso/sin_match) y 'Desglosar APU' (S/N). Luego re-ejecuta. "
+                         "Las columnas de PU muestran el precio oficial del catálogo y el que calcula el APU.",
                          font=font_italica, alignment=align_left)
 
         # Headers
         headers = ["Id entrada", "Concepto entrada", "Unidad", "Cantidad",
                    "Clave sugerida", "Descripción sugerida", "Score", "Método",
-                   "Estado", "Desglosar APU"]
-        anchos = [12, 45, 8, 10, 14, 45, 8, 10, 12, 14]
+                   "Estado", "Desglosar APU",
+                   "PU oficial", "PU APU", "Dif. %", "Origen precio", "Fuente desglose"]
+        anchos = [12, 45, 8, 10, 14, 45, 8, 10, 12, 14,
+                  14, 14, 9, 14, 16]
         if tiene_ia:
             headers += ["Clave IA", "Confianza IA", "Motivo IA"]
             anchos += [14, 12, 40]
@@ -482,12 +543,42 @@ class Constructor:
             # Desglosar APU (editable por el usuario)
             escribir_celda(ws, r, 10, "N", font=font_normal, alignment=align_center)
 
+            # Trazabilidad del precio (modelo canonico de costos)
+            meta = self._meta_precio(resultado)
+            pu_of = meta.get("pu_oficial")
+            pu_apu = meta.get("pu_apu")
+            escribir_celda(ws, r, 11, round(float(pu_of), 4) if pu_of else "",
+                           font=font_normal, alignment=align_right, number_format="$#,##0.00")
+            escribir_celda(ws, r, 12, round(float(pu_apu), 4) if pu_apu else "",
+                           font=font_normal, alignment=align_right, number_format="$#,##0.00")
+            if pu_of and pu_apu and float(pu_of) > 0:
+                dif_pct = (float(pu_apu) - float(pu_of)) / float(pu_of)
+                fill_dif = None
+                if abs(dif_pct) > 0.01:
+                    fill_dif = PatternFill(start_color="FFF2CC", end_color="FFF2CC",
+                                           fill_type="solid")
+                celda = escribir_celda(ws, r, 13, dif_pct, font=font_normal,
+                                       alignment=align_right, number_format="+0.0%;-0.0%;0.0%")
+                if fill_dif:
+                    celda.fill = fill_dif
+            else:
+                escribir_celda(ws, r, 13, "", font=font_normal, alignment=align_right)
+            escribir_celda(ws, r, 14, meta.get("origen") or "",
+                           font=font_normal, alignment=align_center)
+            fuente = meta.get("fuente") or ""
+            celda_fuente = escribir_celda(ws, r, 15, fuente,
+                                          font=font_normal, alignment=align_center)
+            if fuente and fuente != "canonica":
+                # fuente no contractual: se marca para que se note
+                celda_fuente.fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC",
+                                                fill_type="solid")
+
             if tiene_ia:
-                escribir_celda(ws, r, 11, resultado.get("clave_ia") or "",
+                escribir_celda(ws, r, 16, resultado.get("clave_ia") or "",
                                font=font_normal_rojo, alignment=align_center)
-                escribir_celda(ws, r, 12, resultado.get("confianza_ia", ""),
+                escribir_celda(ws, r, 17, resultado.get("confianza_ia", ""),
                                font=font_normal, alignment=align_center, number_format="0.00")
-                escribir_celda(ws, r, 13, resultado.get("motivo_ia", ""),
+                escribir_celda(ws, r, 18, resultado.get("motivo_ia", ""),
                                font=font_italica, alignment=align_left)
 
             aplicar_borde(ws, r, 1, n_cols)
@@ -641,6 +732,26 @@ class Constructor:
         pu_row = fila
         escribir_celda(ws, 2, 6, f"=F{pu_row}", font=font_subtotal,
                        alignment=align_right, number_format="$#,##0.00")
+
+        # ---- PU oficial del catalogo (regla del modelo canonico) ----
+        # El modelo define la prioridad: publicado > APU > manual. Si el APU
+        # recalculado difiere del publicado, ambos quedan a la vista.
+        pu_oficial = apu.get("pu_oficial")
+        if pu_oficial:
+            fila += 1
+            merge_y_escribir(ws, f"C{fila}:E{fila}", "PU OFICIAL (CATALOGO)",
+                             font=font_normal, alignment=align_left)
+            escribir_celda(ws, fila, 6, round(float(pu_oficial), 4),
+                           font=font_normal, alignment=align_right,
+                           number_format="$#,##0.00")
+            origen = apu.get("origen_precio") or ""
+            fuente = apu.get("fuente") or ""
+            nota = f"origen: {origen}" if origen else ""
+            if fuente and fuente != "canonica":
+                nota += f" | desglose: {fuente} (fuente no contractual)"
+            if nota:
+                merge_y_escribir(ws, f"A{fila}:B{fila}", nota,
+                                 font=font_italica, alignment=align_left)
 
         # ---- Anchos e impresión ----
         ws.column_dimensions["A"].width = 14
@@ -1440,11 +1551,15 @@ class Constructor:
 
         escribir_celda(ws, r, 5, unidad, font=font_normal, alignment=align_center)
 
-        # PU: referencia a la hoja APU si existe; si no, PU del catálogo
-        # Buscar por id_entrada (ej. CIM-001), no por clave_sugerida (ej. 10608-003)
+        # PU: el oficial del modelo canonico (publicado > APU > manual) o, si
+        # se pidio cotizar el APU, la celda PU DE VENTA de la hoja APU
+        # (recalculo vivo al editar Insumos).
         if revisar:
             escribir_celda(ws, r, 6, 0, font=font_normal_rojo,
                            alignment=align_right, number_format="$#,##0.00")
+        elif self.usar_pu_oficial:
+            escribir_celda(ws, r, 6, self._pu_oficial(id_entrada, resultado),
+                           font=font_normal, alignment=align_right, number_format="$#,##0.00")
         elif id_entrada in self.apu_sheet and id_entrada in self.apu_pu_cell:
             hoja = self.apu_sheet[id_entrada]
             celda_pu = self.apu_pu_cell[id_entrada]
@@ -1637,6 +1752,7 @@ def construir_presupuesto(
     incluir_revision: bool = False,
     validar: bool = True,
     recalcular: bool = True,
+    usar_pu_oficial: bool = True,
 ) -> Path:
     """Construye el presupuesto completo en un solo llamado.
 
@@ -1647,14 +1763,20 @@ def construir_presupuesto(
       4. Cuadrillas (filas locales de las cuadrillas usadas)
       5. Insumos (lista de materiales agregada de los APUs, con IDs locales)
       6. Hojas APU (una por concepto con matriz)
-      7. Presupuesto (PU referencia a la hoja APU)
+      7. Presupuesto (PU: oficial del modelo canonico, o el de la hoja APU)
       8. Portada
       9. Guardar
      10. Validar el libro (opcional; si hay errores se copia como
          presupuesto_con_errores.xlsx)
+
+    `usar_pu_oficial=True` (default) cotiza el PU que manda en el modelo
+    canonico de costos: `v_concepto_pu.precio_unitario`
+    (publicado > APU > manual). Con False se cotiza el PU que recalcula la
+    hoja APU, de modo que editar Insumos mueve el total.
     """
     c = Constructor(ruta_plantilla, carpeta_salida, usar_timestamp,
-                    apu_provider=apu_provider, incluir_revision=incluir_revision)
+                    apu_provider=apu_provider, incluir_revision=incluir_revision,
+                    usar_pu_oficial=usar_pu_oficial)
 
     print("[1/8] Copiando plantilla...")
     c.copiar_plantilla()

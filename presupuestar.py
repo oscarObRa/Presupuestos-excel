@@ -137,6 +137,13 @@ def main(
         None,
         help="Archivo .xlsx de entrada (si la ruta tiene espacios, no hace falta comillas)",
     ),
+    cotizar_apu: bool = typer.Option(
+        False,
+        "--cotizar-apu",
+        help=("Cotiza el PU que recalcula la hoja APU en vez del PU oficial del "
+              "catalogo (regla del modelo canonico: publicado > APU > manual). "
+              "Con esta opcion, editar Insumos mueve el total."),
+    ),
 ):
     """Genera un presupuesto de construccion en Excel.
 
@@ -372,8 +379,13 @@ def main(
         incluir_revision=False,
         validar=True,
         recalcular=True,
+        usar_pu_oficial=not cotizar_apu,
     )
     ok("Presupuesto construido")
+    if cotizar_apu:
+        console.print("  [dim]PU cotizado: el que recalcula la hoja APU[/]")
+    else:
+        console.print("  [dim]PU cotizado: el oficial del catalogo (modelo canonico)[/]")
 
     # =====================================================================
     # 6. EXPORTAR PDF (Presupuesto + cada APU)

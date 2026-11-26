@@ -112,6 +112,15 @@ with st.sidebar:
         help="Carpeta que contiene costos_unitarios/catalogo_costos.json"
     )
 
+    cotizar_apu = st.checkbox(
+        "Cotizar el PU del APU (en vez del oficial del catálogo)",
+        value=False,
+        help=("Por defecto se cotiza el PU oficial del catálogo, como define el "
+              "modelo canónico de costos (publicado > APU > manual). Con esta "
+              "opción se cotiza el PU que recalcula la hoja APU, de modo que "
+              "editar la hoja Insumos mueve el total."),
+    )
+
     st.divider()
     st.subheader("📂 Carpeta de salida")
     st.caption("El presupuesto se guardará en esta carpeta.")
@@ -229,14 +238,16 @@ if generar or regenerar:
 
                 st.write(f"✓ {cost_client.descripcion_contrato()}")
 
-                # Proveedor de APUs (costos.db; fallback matrices)
+                # Proveedor de APUs (BD canónica de costos; fallback matrices)
                 from src.apu_db import ProveedorAPU
                 apu_prov = ProveedorAPU(repo=str(cost_client.repo) if cost_client.repo else None)
                 if apu_prov.disponible:
                     n_apus = apu_prov.cargar_indice()
-                    st.write(f"✓ APUs en costos.db: {n_apus:,} conceptos")
+                    stats_prov = apu_prov.stats().get("canonica", {})
+                    st.write(f"✓ BD canónica de costos: {n_apus:,} APUs "
+                             f"({stats_prov.get('conceptos', 0):,} conceptos)")
                 else:
-                    st.warning("No se encontró costos.db ni MATRICES; APUs/Insumos quedarán vacíos.")
+                    st.warning("No se encontró la BD canónica de costos; APUs/Insumos quedarán vacíos.")
 
                 # 3. Matchear (usa ClienteCosteo.buscar() Nivel 3 como fuente principal)
                 st.write("Matcheando conceptos...")
@@ -314,6 +325,7 @@ if generar or regenerar:
                     # recálculo de Excel se omite en la web: el PDF ya abre Excel.
                     validar=True,
                     recalcular=False,
+                    usar_pu_oficial=not cotizar_apu,
                 )
                 st.write(f"✓ Presupuesto generado")
 
