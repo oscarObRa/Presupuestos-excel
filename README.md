@@ -151,8 +151,10 @@ Presupuestos-excel/
 ├─ plantillas/
 │  └─ machote.xlsx           # Plantilla base (FASAR + Variables)
 ├─ cache/                    # Índice local de matrices (NO se versiona; se regenera)
+├─ scripts/
+│  └─ diagnostico/           # Scripts de inspección y depuración (no son la suite)
 ├─ salidas/                  # Salidas generadas (desde la app web)
-└─ tests/                    # Pruebas y datos de ejemplo
+└─ tests/                    # Suite de pruebas (autocontenida; ver tests/README.md)
 ```
 
 ---

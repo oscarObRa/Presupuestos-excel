@@ -44,6 +44,11 @@ archivos_temporales/
 cache/
 
 # ============================================================
+# Salidas de scripts de diagnostico (regenerables)
+# ============================================================
+scripts/diagnostico/salidas/
+
+# ============================================================
 # Sistema operativo / editores
 # ============================================================
 .DS_Store

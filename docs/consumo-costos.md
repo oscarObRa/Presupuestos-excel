@@ -164,6 +164,35 @@ json.dump({"costos": [c for c in data["conceptos"] if c["aplicacion"] == "genera
 
 ---
 
+## Retorno de cambios (bidireccionalidad) — EN DISEÑO, no disponible
+
+> ⚠️ **Hoy no existe.** El contrato vigente (v1.2) dice explícitamente
+> *"❌ Escribir en la BD canónica"*
+> (`C:\Pontem_dev\costeo\docs\CONTRATO_CONSULTA_COSTOS_SQL.md:250`). No abras
+> la BD en modo escritura ni intentes un UPSERT desde un consumidor: la BD es
+> **regenerable** y `--con-migracion` borra los cambios manuales.
+
+El diseño que se está adoptando (ver [`BACKLOG.md`](BACKLOG.md) B-12 y los
+requerimientos R-6..R-9) es el inverso del nivel 5:
+
+```text
+Consumidor  --(JSON de propuesta)-->  Repo de costeos  --(importador)-->  BD canónica
+```
+
+- El consumidor **produce** un JSON de propuesta (precios corregidos,
+  conceptos nuevos, cuadrillas, hallazgos) y **no** escribe en la BD.
+- El repo de costeos lo **aplica** con un importador propio, con validación,
+  `--dry-run` y registro en `migracion_log`.
+
+Ya existe el precedente en sentido contrario:
+`C:\Pontem_dev\costeo\costos_unitarios\herramientas\importar_catalogo_externo.py`
+importa un JSON de catálogo externo con UPSERT por clave en `conceptos`.
+
+El formato del payload se publicará como **contrato v1.3**. Hasta entonces no
+hay superficie estable: no construyas contra esto.
+
+---
+
 ## Variables de entorno (contrato v1.2)
 
 | Variable | Para qué |
