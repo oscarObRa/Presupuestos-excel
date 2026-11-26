@@ -30,13 +30,13 @@ la especificación funcional o aquí, no existe.
 | B-03 | Sacar `cache/apu_index.json` de git + invalidación | `HECHO` | commit `6cdbce9` |
 | B-04 | Limpiar el historial del blob de 12.3 MB | `HECHO` | `git filter-repo` + force push |
 | B-05 | Actualizar la documentación (spec + consumo) | `HECHO` | `docs/especificacion-funcional.md` v2.0, `docs/consumo-costos.md` |
-| B-06 | Limpiar scripts obsoletos de la raíz | `HECHO` | ver §3 |
-| B-07 | Scripts sueltos en `tests/` con rutas absolutas | `HECHO` | movidos a `scripts/diagnostico/` |
+| B-06 | Limpiar scripts obsoletos de la raíz | `HECHO` | commit `b0912da` |
+| B-07 | Scripts sueltos en `tests/` con rutas absolutas | `HECHO` | commit `b0912da` |
 | B-08 | `src/indexador.py`: solo lo usan scripts de prueba | `PENDIENTE` | decidir si se mueve |
 | B-09 | Descartes silenciosos en `src/apu_source.py` | `PENDIENTE` | medido: 0.03 %, no material |
 | B-10 | Purgar objetos no referenciados en GitHub | `PENDIENTE` | ver §5 (riesgos) |
 | B-11 | Commitear el requerimiento en el repo de costeos | `PENDIENTE` | ver §4 |
-| B-12 | **Bidireccionalidad: devolver cambios a costeo** | `PENDIENTE` | diseño cerrado; requiere R-6..R-8 (ver §3) |
+| B-12 | **Bidireccionalidad: devolver cambios a costeo** | `PENDIENTE` | diseño cerrado en `b0912da`; requiere R-6..R-8 (ver §3) |
 | B-13 | Exportador de propuestas (`src/retorno_costeo.py`) | `PENDIENTE` | depende de R-6/R-7 |
 | B-14 | Consumir la composición de cuadrillas de la canónica | `PENDIENTE` | depende de R-9 (ver §3) |
 
@@ -165,6 +165,10 @@ evita que el número crezca sin que nadie lo note.
 durante la presupuestación aparece algo nuevo (un precio, un concepto, una
 cuadrilla, un rendimiento), debe poder copiarse de regreso a
 `C:\Pontem_dev\costeo`.
+
+**Estado:** diseño cerrado y documentado el 2026-11-26 (commit `b0912da`).
+La implementación depende del contrato v1.3 y del importador en costeo
+(R-6, R-7, R-8).
 
 #### Decisión de diseño: el consumidor NO escribe en la BD canónica
 
