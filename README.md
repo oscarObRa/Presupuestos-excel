@@ -75,17 +75,31 @@ quede en `$0`.
 
 ## 🔌 Integración con otros repos
 
-El catálogo de costos PONTEM está diseñado para ser consumido desde cualquier otro repositorio o sistema. Hay cinco niveles de integración, ordenados de más simple a más integrada:
+El catálogo de costos PONTEM se consume por su **superficie publicada**
+(`dist/contrato_costos/<versión>/`). Hay cinco niveles de integración, de más
+simple a más integrado:
 
 | Nivel | Método | Ideal para |
 |---|---|---|
 | **1** | Leer `catalogo_costos.json` directamente | Cualquier lenguaje (JS, Go, Rust); cero dependencias |
 | **2** | `pip install` del paquete PONTEM | API limpia en Python con scoring: `buscar("muro de block")` |
-| **3** | Copiar `buscador_costos.py` (~300 líneas, stdlib-only) | Portabilidad máxima, sin instalar nada ni acceder a GitHub |
-| **4** | Usar `indice_pu.json` por proyecto | Navegar archivos Excel de un proyecto específico sin abrirlos |
+| **3** | Copiar `buscador_costos.py` (stdlib-only) | Portabilidad máxima, sin instalar nada ni acceder a GitHub |
+| **4** | La BD canónica (`costos_canonico.db`, read-only) | **APU, rendimientos, cuadrillas, costo horario y el origen del precio** |
 | **5** | Script de sincronización + Task Scheduler | Integración desacoplada con actualización semanal automática |
 
 → Detalle completo en [`docs/consumo-costos.md`](docs/consumo-costos.md).
+
+---
+
+## 📚 Documentación
+
+| Documento | Qué es |
+|---|---|
+| [`README.md`](README.md) | Guía de uso (este archivo) |
+| [`docs/especificacion-funcional.md`](docs/especificacion-funcional.md) | Especificación vigente: hojas, columnas, fórmulas, validaciones |
+| [`docs/consumo-costos.md`](docs/consumo-costos.md) | Cómo consumir el contrato de costos desde otros repos |
+| [`docs/BACKLOG.md`](docs/BACKLOG.md) | **Registro de seguimiento**: qué está hecho, qué falta, riesgos |
+| [`docs/plan.md`](docs/plan.md) | Bitácora histórica del proyecto (no se actualiza) |
 
 ---
 

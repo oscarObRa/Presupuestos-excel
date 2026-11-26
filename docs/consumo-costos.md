@@ -1,101 +1,175 @@
 # Cómo consumir el sistema de costos PONTEM desde otros repos
 
-Cinco niveles de integración, ordenados de más simple a más integrada.
+**Actualizado:** 2026-11-26 — alineado con el contrato publicado **v1.2**
+(`C:\Pontem_dev\costeo\dist\contrato_costos\1.2.0\`).
+
+> **Regla del contrato** (`LEEME.md` del paquete publicado):
+> *"El consumidor se ata al artefacto, no al interior del repo Costos. No leas
+> Excel, carpetas fuente ni tablas internas."*
+>
+> Es decir: consume `dist/contrato_costos/<versión>/` (o las variables de
+> entorno), nunca `costos.db`, ni `costos_unitarios/`, ni los Excel de
+> `PU2026\`.
 
 ---
 
-## Nivel 1 — Leer el JSON directamente (sin dependencias)
+## Nivel 1 — Leer el JSON publicado (sin dependencias)
 
 ```python
 import json
 
-with open("costos_unitarios/catalogo_costos.json") as f:
+with open(r"C:\Pontem_dev\costeo\dist\contrato_costos\1.2.0\catalogo_costos.json") as f:
     data = json.load(f)
 
-# Ya tienes 12,329 conceptos indexados
+# 12,927 conceptos indexados
 for c in data["conceptos"]:
     if "muro" in c["descripcion"].lower():
         print(c["clave"], c["precio_unitario"])
 ```
 
-**Ventaja:** Cero dependencias. Sirve en cualquier lenguaje (JS, Go, Rust).
+**Ventaja:** cero dependencias; funciona en cualquier lenguaje.
 
 ---
 
 ## Nivel 2 — Instalar el paquete pip (API de Python)
 
 ```bash
-pip install git+https://<token>@github.com/pontem-dev/costeo.git
+pip install pontem-costos
 ```
 
 ```python
 from pontem_costos import buscar, buscar_por_clave, meta
 
 resultados = buscar("muro de block", limite=5)
-# -> [{"clave": "14203-015", "precio_unitario": 1234.56, ...}, ...]
+# -> [{"clave": "14203-015", "precio_unitario": 1234.56, "score": 0.71, ...}, ...]
+
+concepto = buscar_por_clave("10502-081")
+print(concepto["precio_unitario"], concepto["unidad"])
 ```
 
-**Ventaja:** API limpia, 1 línea. Así lo consume Modelador-m7.
+**Ventaja:** API limpia, 1 línea.
 
 ---
 
-## Nivel 3 — Copiar el buscador (stdlib-only, ~300 líneas)
+## Nivel 3 — Copiar el buscador (stdlib-only)
 
-El archivo `buscador_costos.py` solo usa bibliotecas estándar de Python (`json`, `re`, `pathlib`). Lo copias a cualquier repo y funciona:
+`buscador_costos.py` solo usa bibliotecas estándar (`json`, `re`, `pathlib`).
+Está en el paquete publicado; lo copias a tu repo y funciona:
 
 ```python
-# En tu repo:
-from buscador_costos import buscar_en_indice, cargar_indice
+from buscador_costos import buscar, buscar_por_clave, cargar, meta
 
-indice = cargar_indice("ruta/a/catalogo_costos.json")
-resultados = buscar_en_indice(indice, "concreto", limite=10)
+# carga manual (el propio `buscar` ya cachea)
+_meta, conceptos = cargar(r"c:\...\dist\contrato_costos\1.2.0\catalogo_costos.json")
+
+resultados = buscar("concreto", limite=10,
+                     ruta_indice=r"c:\...\dist\contrato_costos\1.2.0\catalogo_costos.json")
 ```
 
-**Ventaja:** Portátil, no necesita `pip install`, no requiere acceso a GitHub.
+**Ventaja:** portátil, sin `pip install`, sin acceso a GitHub.
 
 ---
 
-## Nivel 4 — Usar el índice de proyecto (`indice_pu.json`)
+## Nivel 4 — La BD canónica (SQLite read-only) ⭐
 
-Para investigar archivos Excel de un proyecto específico (OMA, AD01, etc.):
+Para APU, rendimientos, cuadrillas, costo horario y trazabilidad del precio.
+Está en el paquete publicado como `costos_canonico.db`.
 
 ```python
-import json
+import sqlite3
 
-with open("indice_pu.json") as f:
-    indice = json.load(f)
+uri = r"file:///C:/Pontem_dev/costeo/dist/contrato_costos/1.2.0/costos_canonico.db?mode=ro"
+con = sqlite3.connect(uri, uri=True)
+con.row_factory = sqlite3.Row
 
-# Buscar dónde está la tarjeta APU de PCI-05
-concepto = indice["indice_cruzado"]["PCI-05"]
-print(concepto["tarjeta_apu"]["archivo"])   # -> nombre del Excel
-print(concepto["tarjeta_apu"]["hoja"])      # -> hoja PCI-05
-print(concepto["catalogos"])                # -> en qué catálogos aparece
+# El PU que manda y su origen (publicado > APU > manual)
+for r in con.execute("""
+    SELECT clave, descripcion, unidad, precio_unitario, origen_precio
+    FROM v_concepto_pu WHERE clave = ?
+""", ("10502-081",)):
+    print(dict(r))
+
+# La matriz APU valuada
+for r in con.execute("""
+    SELECT orden, insumo_clave, descripcion, tipo, cantidad_calculada,
+           costo_unitario, importe, origen_costo
+    FROM v_apu_linea_costo
+    WHERE apu_id = (SELECT apu_id FROM v_concepto_pu WHERE clave = '10502-081')
+    ORDER BY orden
+"""):
+    print(dict(r))
 ```
 
-**Ventaja:** Navegación instantánea entre archivos, sin abrir Excel.
+O con la API que trae el paquete (son **funciones de módulo**, no una clase).
+Ojo con la forma del retorno: `obtener_concepto()` y `obtener_apu()` devuelven
+un dict con la clave anidada:
+
+```python
+from consultas_sql import (
+    meta, buscar, obtener_concepto, obtener_apu,
+    obtener_rendimientos, obtener_equipo, conectar,
+)
+
+DB = r"C:\Pontem_dev\costeo\dist\contrato_costos\1.2.0\costos_canonico.db"
+
+print(meta(DB))
+# {'esquema': {...}, 'conceptos': 12927, 'apus': 838, 'lineas_apu': 3982, ...}
+
+concepto = obtener_concepto("10502-081", DB)["concepto"]
+print(concepto["clave"], concepto["precio_unitario"], concepto["origen_precio"])
+
+apu = obtener_apu("10502-081", DB)
+print(apu["apu"]["costo_directo"], len(apu["lineas"]))
+for l in apu["lineas"]:
+    print(l["orden"], l["insumo_clave"], l["descripcion"], l["cantidad_calculada"])
+```
+
+O con SQL directo (la forma más flexible):
+
+```python
+import sqlite3
+
+uri = r"file:///C:/Pontem_dev/costeo/dist/contrato_costos/1.2.0/costos_canonico.db?mode=ro"
+con = sqlite3.connect(uri, uri=True)
+con.row_factory = sqlite3.Row
+
+for r in con.execute("SELECT clave, precio_unitario, origen_precio FROM v_concepto_pu"):
+    print(dict(r))
+```
+
+**Reglas:** abrir **read-only** (`?mode=ro`) y consultar **solo vistas
+públicas** (`v_concepto_publicado`, `v_concepto_pu`, `v_apu_resumen`,
+`v_apu_linea_costo`, `v_rendimientos`, `v_equipo_costo_hora_detalle`,
+`v_cuadrilla_detalle`…); nunca tablas internas.
+
+**Ventaja:** es el único nivel que da el desglose del APU y la razón del
+precio.
 
 ---
 
-## Nivel 5 — Integración directa (como Retaining Wall)
+## Nivel 5 — Integración desacoplada (copia periódica)
 
-El script `costos_unitarios/integraciones/alimentar_rw.py` hace esto:
+El patrón que usa Retaining Wall: un proceso del repo de costeos escribe un
+JSON propio y el otro repo solo lee ese JSON, sin saber que costeo existe.
 
 ```python
-# 1. Lee el índice JSON
-with open("catalogo_costos.json") as f:
-    data = json.load(f)
-
-# 2. Filtra por aplicación ("general")
-conceptos_rw = [c for c in data["conceptos"] if c["aplicacion"] == "general"]
-
-# 3. Escribe el JSON que consume Retaining Wall
-with open("C:/.../Retaining_wall_app/src/data/costos.json", "w") as f:
-    json.dump({"costos": conceptos_rw}, f)
+# En el repo de costeos (no en el consumidor)
+data = json.load(open("catalogo_costos.json", encoding="utf-8"))
+json.dump({"costos": [c for c in data["conceptos"] if c["aplicacion"] == "general"]},
+          open(r"C:\...\Retaining_wall_app\src\data\costos.json", "w", encoding="utf-8"),
+          ensure_ascii=False)
 ```
 
-Se ejecuta semanalmente con Windows Task Scheduler. El otro repo solo lee su propio JSON, ni siquiera sabe que costeo existe.
+**Ventaja:** sincronización automática (Task Scheduler) y desacople total.
 
-**Ventaja:** Sincronización automática periódica, desacople total entre repos.
+---
+
+## Variables de entorno (contrato v1.2)
+
+| Variable | Para qué |
+|---|---|
+| `PONTEM_COSTOS_DB` | ruta exacta de la BD canónica (snapshot o BD viva) |
+| `PONTEM_COSTOS_JSON` | ruta exacta del catálogo JSON |
 
 ---
 
@@ -106,5 +180,24 @@ Se ejecuta semanalmente con Windows Task Scheduler. El otro repo solo lee su pro
 | Buscar precios desde cualquier lenguaje | Nivel 1 (JSON directo) |
 | API limpia en Python con scoring | Nivel 2 (`pip install`) |
 | Portabilidad máxima, sin instalar nada | Nivel 3 (copiar buscador) |
-| Navegar archivos Excel de proyecto | Nivel 4 (`indice_pu.json`) |
-| Sincronización automática periódica | Nivel 5 (script + scheduler) |
+| APU, rendimientos, cuadrillas o costo horario | **Nivel 4 (BD canónica)** |
+| Sincronización automática periódica | Nivel 5 (copia + scheduler) |
+
+---
+
+## Nota: qué queda dentro del repo de costeos
+
+Estos artefactos son **internos** del repo de costeos y **no** son superficie
+de consumo (el contrato los prohíbe explícitamente); algunos se retirarán:
+
+| Ruta interna | Nota |
+|---|---|
+| `costos.db` | base legacy de tablas planas, con totales congelados |
+| `esquema.sql` | vacío (0 KB) |
+| `_apu_loader.py`, `db_costos.py` | pipeline legacy de carga |
+| `indice_pu.json` | índice de navegación de archivos Excel de proyecto |
+| `CATALOGO_CONSOLIDADO_*.xlsx` | consolidado de trabajo |
+| `costos_unitarios/PU2026\*.xlsx` | matrices fuente |
+
+El consumidor **no** debe leerlos. El equivalente contractual de cada uno está
+en el paquete publicado (`dist/contrato_costos/<versión>/`).
