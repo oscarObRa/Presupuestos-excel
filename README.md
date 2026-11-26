@@ -129,13 +129,14 @@ Presupuestos-excel/
 │  ├─ matcher.py             # Emparejamiento exacto / oficial / fuzzy
 │  ├─ llm.py                 # Sugerencias con IA (DeepSeek / OpenRouter)
 │  ├─ apu_db.py              # APUs desde la BD canónica de costos (read-only)
-│  ├─ apu_source.py          # APUs desde las matrices .xlsx (con caché)
+│  ├─ apu_source.py          # Fallback: APUs desde las matrices .xlsx (no contractual)
 │  ├─ constructor.py         # Construye el .xlsx (Presupuesto, APU, Portada...)
 │  ├─ validador.py           # Validación de integridad del libro generado
 │  ├─ formulas.py            # Helpers para fórmulas Excel
 │  └─ pdf_export.py          # Exporta Presupuesto + APUs a PDF
 ├─ plantillas/
 │  └─ machote.xlsx           # Plantilla base (FASAR + Variables)
+├─ cache/                    # Índice local de matrices (NO se versiona; se regenera)
 ├─ salidas/                  # Salidas generadas (desde la app web)
 └─ tests/                    # Pruebas y datos de ejemplo
 ```
@@ -292,6 +293,18 @@ Reglas que respeta el código:
   el índice de matrices (fuente *no contractual*): la hoja Revisión lo marca
   como `matrices` y el PU sigue siendo el oficial. Se desactiva con
   `PONTEM_COSTOS_SIN_MATRICES=1`.
+
+> **El índice de matrices (`cache/apu_index.json`) es local y no se versiona.**
+> Es un artefacto derivado de `G:\Mi unidad\Costos\PU2026\` (12 MB), así que
+> queda fuera de git (`.gitignore`). Se regenera solo cuando cambian las
+> matrices: el código guarda una huella (hash de ruta + fecha + tamaño de cada
+> Excel) en `cache/apu_index.meta.json` y rehace el índice si no coincide.
+> La primera vez tarda ~4 minutos; después, ~1 segundo.
+> Para forzarlo:
+> ```python
+> from src.apu_source import MatricesProvider
+> MatricesProvider().cargar_indice(forzar=True)
+> ```
 
 Variables de entorno:
 

@@ -37,6 +37,13 @@ archivos_temporales/
 *.tmp
 
 # ============================================================
+# Cache local (artefacto derivado, se regenera solo)
+# ============================================================
+# cache/apu_index.json: indice de las matrices de G:\Mi unidad\Costos\PU2026.
+# Es local: se regenera cuando cambian las matrices (fingerprint por mtime).
+cache/
+
+# ============================================================
 # Sistema operativo / editores
 # ============================================================
 .DS_Store

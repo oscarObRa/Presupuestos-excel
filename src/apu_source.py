@@ -21,10 +21,12 @@ Uso:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -297,14 +299,73 @@ class MatricesProvider:
     def _cache_path(self) -> Path:
         return self.cache_dir / "apu_index.json"
 
+    def _meta_path(self) -> Path:
+        return self.cache_dir / "apu_index.meta.json"
+
+    def _fingerprint_fuentes(self) -> str:
+        """Huella de las matrices fuente.
+
+        Hash de (ruta relativa, mtime_ns, tamaño) de cada archivo: detecta
+        cualquier cambio (editar, agregar o borrar una matriz). Un simple
+        "mtime máximo" no serviría, porque editar una matriz que no sea la
+        más reciente dejaría el cache vencido sin detectarlo.
+        """
+        if not self.fuentes or not self.fuentes.exists():
+            return "sin-fuentes"
+        archivos = listar_matrices(self.fuentes)
+        if not archivos:
+            return "sin-archivos"
+        h = hashlib.sha1()
+        for p in sorted(archivos):
+            try:
+                st = p.stat()
+                rel = p.relative_to(self.fuentes)
+            except (OSError, ValueError):
+                continue
+            h.update(f"{rel}|{st.st_mtime_ns}|{st.st_size}".encode("utf-8", "replace"))
+        return f"{len(archivos)}:{h.hexdigest()[:16]}"
+
+    def _cache_al_dia(self) -> bool:
+        """El cache existe y corresponde a las matrices actuales."""
+        cp = self._cache_path()
+        if not cp.exists():
+            return False
+        mp = self._meta_path()
+        if not mp.exists():
+            # Cache heredado (sin meta): se regenera para no servir datos viejos
+            return False
+        try:
+            meta = json.loads(mp.read_text(encoding="utf-8"))
+        except Exception:
+            return False
+        return meta.get("fingerprint") == self._fingerprint_fuentes()
+
+    def _guardar_cache(self, index: dict):
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            self._cache_path().write_text(
+                json.dumps(index, ensure_ascii=False), encoding="utf-8")
+            self._meta_path().write_text(
+                json.dumps({
+                    "generado": datetime.now().isoformat(timespec="seconds"),
+                    "fingerprint": self._fingerprint_fuentes(),
+                    "apus": len(index),
+                }, ensure_ascii=False),
+                encoding="utf-8")
+        except Exception:
+            pass
+
     def cargar_indice(self, forzar: bool = False) -> int:
-        """Construye/carga el índice completo clave->APU."""
+        """Construye/carga el índice completo clave->APU.
+
+        El cache es LOCAL y no se versiona (ver .gitignore): se regenera solo
+        cuando las matrices fuente cambian.
+        """
         if self._cargado and not forzar:
             return len(self._index)
-        cp = self._cache_path()
-        if cp.exists() and not forzar:
+        if not forzar and self._cache_al_dia():
             try:
-                self._index = json.loads(cp.read_text(encoding="utf-8"))
+                self._index = json.loads(self._cache_path().read_text(encoding="utf-8"))
                 self._cargado = True
                 return len(self._index)
             except Exception:
@@ -324,11 +385,7 @@ class MatricesProvider:
                 index[apu["clave"]] = apu
         self._index = index
         self._cargado = True
-        try:
-            cp.parent.mkdir(parents=True, exist_ok=True)
-            cp.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        self._guardar_cache(index)
         return len(index)
 
     def apu_de(self, clave: str, paquete: Optional[str] = None) -> Optional[dict]:
