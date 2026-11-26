@@ -9,7 +9,7 @@ Flujo:
 2. Llenar Variables con datos del proyecto
 3. Escribir Insumos (tabla maestra con fórmulas)
 4. Escribir Revision (resultados del matcheo)
-5. Crear APU_<clave> dinámicos (para conceptos desglosados)
+5. Crear APU_<id> dinámicos (para conceptos desglosados)
 6. Llenar Presupuesto con VLOOKUP → Insumos
 7. Crear Explosion (BOM — explosión de insumos)
 """

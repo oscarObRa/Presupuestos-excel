@@ -9,7 +9,7 @@ Sistema automatizado para construir presupuestos de construcción en Excel a par
 Un script Python (`presupuestar.py`) que construye un presupuesto de construcción en un único archivo `.xlsx` a partir de:
 
 - Un archivo de entrada con los conceptos a cotizar.
-- El catálogo de precios unitarios del repo PONTEM (~12,329 conceptos).
+- El catálogo de precios unitarios del repo PONTEM (12,927 conceptos).
 - El archivo de parámetros FASAR (categorías, cuadrillas y variables).
 - Una plantilla `.xlsx` de presentación.
 
@@ -25,7 +25,7 @@ El resultado es un libro de Excel autocontenido, con dependencias encadenadas en
 4. **Lectura de entrada**: procesa un `.xlsx` con columnas `id`, `concepto`, `unidad`, `cantidad`.
 5. **Lectura FASAR**: extrae parámetros, categorías y cuadrillas del archivo de cálculo FASAR.
 6. **Emparejamiento automático**: matchea cada concepto de entrada contra el catálogo PONTEM (exacto, fuzzy y opcionalmente con LLM).
-7. **Construcción del libro**: escribe las hojas `Presupuesto`, `Variables`, `Insumos`, `Categorías`, `Cuadrillas`, `APU_<clave>` y `Revisión`.
+7. **Construcción del libro**: escribe las hojas `Presupuesto`, `Variables`, `Insumos`, `Categorías`, `Cuadrillas`, `APU_<id>` y `Revisión`.
 8. **Validación**: revisa integridad de fórmulas, referencias y totales antes de la entrega.
 9. **Archivo único de salida**: `salidas/<timestamp>/presupuesto.xlsx`.
 
@@ -123,12 +123,12 @@ Presupuestos-excel/
 ├─ src/
 │  ├─ estilos.py             # Colores, fuentes, bordes
 │  ├─ visual_dna.py          # Tokens visuales (DNA) de la marca
-│  ├─ indexador.py           # Índice sobre costos.db (SQLite)
+│  ├─ indexador.py           # Índice de búsqueda sobre el catálogo (JSON/SQLite)
 │  ├─ lector_entrada.py      # Lee el .xlsx de entrada (partidas/subpartidas)
 │  ├─ costeo_client.py       # Cliente del repo de costos (Nivel 1 / Nivel 3)
 │  ├─ matcher.py             # Emparejamiento exacto / oficial / fuzzy
 │  ├─ llm.py                 # Sugerencias con IA (DeepSeek / OpenRouter)
-│  ├─ apu_db.py              # APUs desde costos.db
+│  ├─ apu_db.py              # APUs desde la BD canónica de costos (read-only)
 │  ├─ apu_source.py          # APUs desde las matrices .xlsx (con caché)
 │  ├─ constructor.py         # Construye el .xlsx (Presupuesto, APU, Portada...)
 │  ├─ validador.py           # Validación de integridad del libro generado
@@ -395,14 +395,17 @@ Sube el archivo, llena los datos del proyecto y descarga el `.xlsx` y el `.pdf`.
 ## Flujo de ejecución
 
 ```
-[1/6] Indexando repo PONTEM...          ✓ 12,329 conceptos
-[2/6] Leyendo entrada...                ✓ N conceptos
-[3/6] Leyendo FASAR...                  ✓ N categorías, N cuadrillas
-[4/6] Matcheando...                     ✓ N exactos, N fuzzy, N dudosos
-[5/6] Escribiendo hoja Revisión...      ✓ N filas
-[6/6] Construyendo presupuesto...       ✓ fórmulas escritas
-[✓] Validación: 0 errores, 0 advertencias
-[✓] Salida: ./salidas/2026-11-19_1430/presupuesto.xlsx
+[1/8] Copiando plantilla...              ✓ machote.xlsx
+[2/8] Escribiendo Variables...            ✓ indirectos, utilidad, IVA
+[3/8] Preparando APUs...                  ✓ N APUs (BD canónica)
+[4/8] Escribiendo Cuadrillas...           ✓ N cuadrillas (IDs locales)
+[5/8] Escribiendo Insumos...              ✓ N insumos
+[6/8] Creando hojas APU...                ✓ N hojas
+[7/8] Escribiendo Presupuesto...          ✓ fórmulas escritas
+[8/8] Escribiendo Portada...              ✓ resumen del proyecto
+Guardando...                              ✓ ./salidas/.../presupuesto.xlsx
+Validando libro...                        ✓ 0 errores, 0 advertencias
+[✓] PDF generado                          ✓ Presupuesto + APUs
 ```
 
 ---
@@ -451,12 +454,12 @@ Si el libro tiene errores, además se guarda una copia como
 | Fase | Entregable | Criterio |
 |---|---|---|
 | F0 | Estructura, `config.yaml`, `requirements.txt` | `pip install -r` sin errores |
-| F1 | `indexador.py` y `lector_entrada.py` | Carga los 12,329 conceptos y el archivo de entrada |
+| F1 | `indexador.py` y `lector_entrada.py` | Carga los 12,927 conceptos y el archivo de entrada |
 | F2 | `lector_fasar.py` | Extrae parámetros, categorías y cuadrillas |
 | F3 | `matcher.py` sin LLM | ≥90% de la entrada mapeada o marcada |
 | F4 | `constructor.py`: hojas base | Abre en Excel/LibreOffice sin errores |
 | F5 | `constructor.py`: `Presupuesto` y `Revisión` | Fórmulas `VLOOKUP` funcionan |
-| F6 | `constructor.py`: `APU_<clave>` | Cambiar un insumo recalcula el PU |
+| F6 | `constructor.py`: `APU_<id>` | Cambiar un insumo recalcula el PU |
 | F7 | `validador.py` | Reporte limpio en caso feliz; detección de errores inyectados |
 | F8 | `llm.py` | Sugerencias en `Revisión` sin tocar otras hojas |
 | F9 | CLI final y pruebas end-to-end | Corre con archivos de ejemplo reales |

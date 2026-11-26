@@ -227,14 +227,16 @@ def main(
     console.print(f"  [dim]Repo: {cost_client.repo}[/]")
     ok(f"Contrato: {cost_client.descripcion_contrato()}")
 
-    # Proveedor de APUs (costos.db del repo; fallback matrices si falta)
+    # Proveedor de APUs (BD canónica de costos; fallback de matrices si falta)
     apu_prov = ProveedorAPU(repo=str(cost_client.repo) if cost_client.repo else None)
     if apu_prov.disponible:
         n_apus = apu_prov.cargar_indice()
-        ok(f"APUs en costos.db: {n_apus:,} conceptos (fallback a matrices si falta)")
+        stats_prov = apu_prov.stats().get("canonica", {})
+        ok(f"BD canónica de costos: {n_apus:,} APUs "
+           f"({stats_prov.get('conceptos', 0):,} conceptos)")
     else:
-        console.print("  [bold yellow][!][/] No se encontro costos.db ni MATRICES; "
-                      "las hojas APU e Insumos quedarán vacías.")
+        console.print("  [bold yellow][!][/] No se encontro la BD canónica de costos "
+                      "ni las matrices; las hojas APU e Insumos quedarán vacías.")
 
     # =====================================================================
     # 3. DATOS DEL PROYECTO Y VARIABLES

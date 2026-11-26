@@ -1,12 +1,17 @@
-"""
+r"""
 indexador.py
 ============
-Índice de búsqueda sobre costos.db (SQLite) - reemplaza el Indexador basado en JSON.
+Índice de búsqueda sobre el catálogo de costos.
+
+Acepta el JSON publicado (`catalogo_costos.json`) o una BD SQLite con la
+tabla `conceptos`. El flujo de producción usa `src/costeo_client.py`
+(que además busca por `buscador_costos.py`); este módulo queda como
+índice local para los scripts de prueba y diagnóstico.
 
 Uso:
     from src.indexador import Indexador
 
-    idx = Indexador(r"C:\Pontem_dev\costeo\costos.db")
+    idx = Indexador(r"C:\Pontem_dev\costeo\dist\contrato_costos\1.2.0\catalogo_costos.json")
     idx.cargar()
 
     # Búsqueda por clave exacta
@@ -29,7 +34,7 @@ from typing import Optional, List, Dict
 
 
 class Indexador:
-    """Índice de búsqueda sobre costos.db (SQLite)."""
+    """Índice de búsqueda sobre el catálogo (JSON o SQLite)."""
 
     def __init__(self, ruta_db: str):
         self.ruta_db = Path(ruta_db)
@@ -126,7 +131,7 @@ class Indexador:
 
 
 if __name__ == "__main__":
-    idx = Indexador(r"C:\Pontem_dev\costeo\costos.db")
+    idx = Indexador(r"C:\Pontem_dev\costeo\dist\contrato_costos\1.2.0\catalogo_costos.json")
     idx.cargar()
     print(f"Total: {idx.total}")
     print(idx.buscar("muro", limite=3))
