@@ -413,7 +413,7 @@ class Constructor:
                    "Costo unitario", "Cantidad total", "Importe", "Notas", "Clave origen"]
         anchos = [12, 14, 55, 10, 16, 16, 18, 24, 16]
         for i, (h, w) in enumerate(zip(headers, anchos), 1):
-            escribir_celda(ws, 4, i, h, font=self.dna.font_header_tabla_fallback(blanco=True), fill=self.dna.fill_verde_icel(),
+            escribir_celda(ws, 4, i, h, font=self.dna.font_header_tabla_fallback(blanco=True), fill=self.dna.fill_verde_encabezado(),
                            alignment=self.dna.align_center_nowrap())
             ws.column_dimensions[col_letra(i)].width = w
         aplicar_borde(ws, 4, 1, 9)
@@ -891,7 +891,7 @@ class Constructor:
         for i, h in enumerate(headers_portada, 1):
             cell = ws.cell(row=r, column=i, value=h)
             cell.font = self.dna.font_header_tabla_fallback(blanco=True)
-            cell.fill = self.dna.fill_verde_icel()
+            cell.fill = self.dna.fill_verde_encabezado()
             cell.border = self.dna.border_header_tabla()
             cell.alignment = self.dna.align_center_nowrap()
         r += 1
@@ -927,9 +927,10 @@ class Constructor:
                 merge_y_escribir(ws, f"A{r}:F{r}", f"PARTIDA: {nombre_partida_actual}",
                                  font=self.dna.font_partida(),
                                  alignment=self.dna.align_left())
+                # ADN ICEL: filas agrupadoras de partida con fondo suave #F2F5F0
                 for col in range(1, 7):
                     ws.cell(row=r, column=col).border = self.dna.border_partida()
-                    ws.cell(row=r, column=col).fill = self.dna.fill_verde_icel()
+                    ws.cell(row=r, column=col).fill = self.dna.fill_gris_partida()
                 r += 1
                 continue
 

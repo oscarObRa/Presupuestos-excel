@@ -71,3 +71,39 @@ El diseño se basa en una cuadrícula de **17 columnas (A a Q)**. Esta estructur
 
 * **Logotipo:** `assets/Logo.png`
 * **Pie de Página:** `assets/Pie de pagina.png`
+
+---
+
+## 5. Invocación por Empresa (Factory)
+
+El ADN vive en el paquete `src/visual_dna/` y **el resto del sistema nunca hardcodea colores**: siempre pide el ADN a la fábrica.
+
+### Estructura
+```
+src/visual_dna/
+    __init__.py   # expone get_dna, VisualDNAFactory y compatibilidad (DNA)
+    base.py       # BaseVisualDNA: lógica común (fuentes, fills, bordes, impresión)
+    icel.py       # ICELVisualDNA: paleta, retícula A:Q, CELL_MAP y membrete ICEL
+    factory.py    # VisualDNAFactory: registro de empresas
+```
+
+### Uso en el código
+```python
+from src.visual_dna import get_dna
+
+dna = get_dna("icel")           # explícito
+dna = get_dna(None)             # None → empresa por defecto (ICEL)
+dna = get_dna(proyecto.get("empresa"))  # desde los datos del proyecto
+```
+
+- `construir_presupuesto(..., empresa="icel")` o `proyecto["empresa"] = "icel"`.
+- `Constructor(ruta_plantilla, ..., empresa="icel")` resuelve `self.dna`.
+- Una empresa **sin ADN registrado lanza `ValueError`** (la identidad visual es contractual: mejor fallar que maquillar con otra marca).
+
+### Cómo agregar una nueva empresa
+1. Crear `src/visual_dna/<empresa>.py` con una clase que herede de `BaseVisualDNA`, definiendo su paleta, tipografía, assets, `COLUMN_WIDTHS` y `CELL_MAP`.
+2. Registrarla: `VisualDNAFactory.registrar("nombre_clave", MiEmpresaDNA)` (o añadirla a `REGISTRO` en `factory.py`).
+3. Documentar su ADN en `docs/ADN_<EMPRESA>.md`.
+
+### Verificación
+`python scripts/diagnostico/codigo/verificar_adn.py` — genera un libro de prueba y valida que la paleta (`#3C7D22`, `#275317`) esté aplicada en las hojas y que la factory rechace empresas desconocidas.
