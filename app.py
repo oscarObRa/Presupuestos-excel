@@ -7,6 +7,7 @@ Uso:
 
 import sys
 import os
+import json
 import tempfile
 import shutil
 from pathlib import Path
@@ -27,6 +28,30 @@ def detectar_repo_pontem() -> Path:
     except Exception:
         pass
     return SCRIPT_DIR.parent / "costeo"
+
+
+def info_snapshot_costos(repo: Path | str | None) -> dict | None:
+    """Resuelve EN VIVO el snapshot publicado más reciente del repo de costos.
+
+    Solo toca el sistema de archivos: elige la carpeta de versión más nueva
+    dentro de `dist/contrato_costos/` y lee su `manifest.json` (chico, ~2 KB).
+    Se ejecuta en cada rerun, así que al publicarse una versión nueva la UI
+    la refleja de inmediato sin reiniciar.
+    """
+    try:
+        from src.costeo_client import ruta_indice
+        indice = ruta_indice(Path(repo).resolve()) if repo else None
+        if not indice or not Path(indice).exists():
+            return None
+        info = {"indice": str(indice), "version": Path(indice).parent.name}
+        manifest = Path(indice).parent / "manifest.json"
+        if manifest.exists():
+            contrato = json.loads(manifest.read_text(encoding="utf-8")).get("contrato", {})
+            info.update({k: contrato.get(k) for k in
+                         ("version", "fecha_generado", "conceptos", "apus", "moneda")})
+        return info
+    except Exception:
+        return None
 
 
 REPO_PONTEM_DEFAULT = detectar_repo_pontem()
@@ -109,8 +134,24 @@ with st.sidebar:
     repo_path = st.text_input(
         "Ruta del repo PONTEM",
         value=str(REPO_PONTEM_DEFAULT),
-        help="Carpeta que contiene costos_unitarios/catalogo_costos.json"
+        help="Carpeta del repo de costos. Se consume el snapshot publicado más "
+             "reciente (dist/contrato_costos/<versión>/), nunca el interior del repo."
     )
+
+    # Versión del catálogo resuelta EN VIVO (filesystem, cada rerun)
+    _snap = info_snapshot_costos(repo_path)
+    if _snap:
+        st.success(
+            f"**Catálogo v{_snap.get('version', '?')}**"
+            + (f" ({_snap.get('fecha_generado')})" if _snap.get('fecha_generado') else "")
+        )
+        st.caption(
+            f"{_snap.get('apus', '?')} APUs · {_snap.get('conceptos', '?')} conceptos · "
+            f"{_snap.get('moneda', 'MXN')}\n\n`{_snap['indice']}`"
+        )
+    else:
+        st.error("Sin catálogo publicado: falta dist/contrato_costos/<versión>/ "
+                 "en la ruta indicada.")
 
     cotizar_apu = st.checkbox(
         "PU con fórmulas vivas (editar Insumos mueve el total)",
@@ -177,6 +218,13 @@ if "presupuesto_generado" not in st.session_state:
 # ---------------------------------------------------------------------------
 
 st.divider()
+
+# Ambos flags SIEMPRE existen: Streamlit re-ejecuta todo el script en cada
+# interacción y solo una de las dos ramas define su botón. Sin este
+# inicializador, tras generar con éxito el rerun entra a la rama de
+# "Regenerar" y `generar` no está definido (NameError).
+generar = False
+regenerar = False
 
 # Determinar qué botón mostrar
 if st.session_state.presupuesto_generado and archivo is not None and archivo.name == st.session_state.archivo_nombre:
