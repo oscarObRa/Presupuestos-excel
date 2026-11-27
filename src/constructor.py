@@ -27,7 +27,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter as _xl_col_letter
 from openpyxl.drawing.image import Image as XLImage
 
-from src.visual_dna import DNA
+from src.visual_dna import get_dna
 from src.formulas import (
     VLOOKUP, VLOOKUP_col, SUMIF, SUMPRODUCT, SUM,
     ref_hoja, celda, rango,
@@ -60,7 +60,13 @@ class Constructor:
     def __init__(self, ruta_plantilla: str, carpeta_salida: str = "salidas",
                  usar_timestamp: bool = False, apu_provider=None,
                  incluir_revision: bool = False,
-                 usar_pu_oficial: bool = True):
+                 usar_pu_oficial: bool = True,
+                 empresa: Optional[str] = None):
+        # ADN visual por empresa: la identidad (colores, retícula, assets,
+        # membrete) se resuelve aquí y NUNCA se hardcodea en los métodos.
+        # Con empresa=None se usa la empresa por defecto del ADN (ICEL).
+        self.dna = get_dna(empresa)
+        self.empresa = empresa
         self.ruta_plantilla = Path(ruta_plantilla)
         self.carpeta_salida = Path(carpeta_salida)
         self.usar_timestamp = usar_timestamp
@@ -393,22 +399,22 @@ class Constructor:
         ws = self.wb.create_sheet("Insumos")
 
         merge_y_escribir(ws, "A1:I1", "INSUMOS - Lista de materiales y recursos (explosion de APUs)",
-                         font=DNA.font_titulo(), fill=DNA.fill_verde_icel(), alignment=DNA.align_center())
+                         font=self.dna.font_titulo(), fill=self.dna.fill_verde_icel(), alignment=self.dna.align_center())
         for c in range(1, 10):
-            ws.cell(row=1, column=c).fill = DNA.fill_verde_icel()
+            ws.cell(row=1, column=c).fill = self.dna.fill_verde_icel()
 
         merge_y_escribir(ws, "A2:I2",
                          "Ids locales (INS-xxx) generados para este libro; la clave de la base "
                          "general queda en la columna I. Edita el Costo unitario (col E). "
                          "Para Cuadrillas, edita el $/Jornal en la hoja Cuadrillas.",
-                         font=DNA.font_pequeno(italic=True), alignment=DNA.align_left())
+                         font=self.dna.font_pequeno(italic=True), alignment=self.dna.align_left())
 
         headers = ["Id local", "Tipo", "Descripcion", "Unidad",
                    "Costo unitario", "Cantidad total", "Importe", "Notas", "Clave origen"]
         anchos = [12, 14, 55, 10, 16, 16, 18, 24, 16]
         for i, (h, w) in enumerate(zip(headers, anchos), 1):
-            escribir_celda(ws, 4, i, h, font=DNA.font_header_tabla_fallback(blanco=True), fill=DNA.fill_verde_icel(),
-                           alignment=DNA.align_center_nowrap())
+            escribir_celda(ws, 4, i, h, font=self.dna.font_header_tabla_fallback(blanco=True), fill=self.dna.fill_verde_icel(),
+                           alignment=self.dna.align_center_nowrap())
             ws.column_dimensions[col_letra(i)].width = w
         aplicar_borde(ws, 4, 1, 9)
 
@@ -796,7 +802,7 @@ class Constructor:
         ws = self.wb.create_sheet("Portada", 0)
 
         # Configurar hoja limpia (sin cuadrícula) y anchos estándar
-        DNA.configurar_hoja_limpia(ws)
+        self.dna.configurar_hoja_limpia(ws)
 
         # --- FASE 1: ENCABEZADO CORPORATIVO Y METADATOS ---
         r = 1
@@ -806,8 +812,8 @@ class Constructor:
             if logo_path and os.path.exists(logo_path):
                 img = XLImage(logo_path)
                 ratio = (img.height / img.width) if img.width else 1
-                img.width = DNA.LOGO_ANCHO
-                img.height = int(DNA.LOGO_ANCHO * ratio)
+                img.width = self.dna.LOGO_ANCHO
+                img.height = int(self.dna.LOGO_ANCHO * ratio)
                 ws.add_image(img, "A1")
         except Exception:
             pass
@@ -820,33 +826,33 @@ class Constructor:
         ]
         for i, linea in enumerate(datos_fiscales):
             merge_y_escribir(ws, f"E{r+i}:F{r+i}", linea,
-                             font=DNA.font_cuerpo_fallback(size=9),
-                             alignment=DNA.align_right())
+                             font=self.dna.font_cuerpo_fallback(size=9),
+                             alignment=self.dna.align_right())
         
         # Ciudad y Fecha (fila 7)
         r = 7
         ciudad_fecha = proyecto.get("ciudad_fecha", "Chihuahua, Chih., 22 de noviembre de 2026")
-        escribir_celda(ws, r, 1, ciudad_fecha, font=DNA.font_cuerpo_fallback(size=11))
+        escribir_celda(ws, r, 1, ciudad_fecha, font=self.dna.font_cuerpo_fallback(size=11))
 
         # Clave de propuesta (columna F, fila 7) - alineado derecha
         clave_propuesta = proyecto.get("clave", "AD01 - OMA MTY FASE III - R01")
-        escribir_celda(ws, r, 6, clave_propuesta, font=DNA.font_partida(), alignment=DNA.align_right())
+        escribir_celda(ws, r, 6, clave_propuesta, font=self.dna.font_partida(), alignment=self.dna.align_right())
 
         # Propuesta (fila 10)
         r = 10
-        escribir_celda(ws, r, 1, "Propuesta:", font=DNA.font_subtitulo_fallback())
+        escribir_celda(ws, r, 1, "Propuesta:", font=self.dna.font_subtitulo_fallback())
         merge_y_escribir(ws, f"B{r}:F{r}", proyecto.get("propuesta", "Propuesta Económica"),
-                         font=DNA.font_cuerpo_fallback(bold=True, size=11))
+                         font=self.dna.font_cuerpo_fallback(bold=True, size=11))
 
         # Att'n (fila 13)
         r = 13
-        escribir_celda(ws, r, 1, "Att'n:", font=DNA.font_subtitulo_fallback())
-        escribir_celda(ws, r, 2, proyecto.get("cliente_nombre", ""), font=DNA.font_cuerpo_fallback())
+        escribir_celda(ws, r, 1, "Att'n:", font=self.dna.font_subtitulo_fallback())
+        escribir_celda(ws, r, 2, proyecto.get("cliente_nombre", ""), font=self.dna.font_cuerpo_fallback())
         r += 1
-        escribir_celda(ws, r, 2, proyecto.get("cliente_cargo", ""), font=DNA.font_cuerpo_fallback())
+        escribir_celda(ws, r, 2, proyecto.get("cliente_cargo", ""), font=self.dna.font_cuerpo_fallback())
         r += 1
         # Proyecto en negrita
-        escribir_celda(ws, r, 2, proyecto.get("proyecto_nombre", ""), font=DNA.font_partida())
+        escribir_celda(ws, r, 2, proyecto.get("proyecto_nombre", ""), font=self.dna.font_partida())
 
         # Texto introductorio (fila 17)
         r = 17
@@ -855,12 +861,12 @@ class Constructor:
             "para la ejecución de los trabajos descritos a continuación, de acuerdo con los alcances, "
             "especificaciones y condiciones establecidas.")
         merge_y_escribir(ws, f"B{r}:F{r}", texto_intro,
-                         font=DNA.font_cuerpo_fallback(size=10),
-                         alignment=DNA.align_left())
+                         font=self.dna.font_cuerpo_fallback(size=10),
+                         alignment=self.dna.align_left())
 
         # --- FASE 2: TABLA DE PRESUPUESTO DINÁMICA ---
         r = 20
-        escribir_celda(ws, r, 1, "I.- Propuesta Económica:", font=DNA.font_subtitulo_fallback())
+        escribir_celda(ws, r, 1, "I.- Propuesta Económica:", font=self.dna.font_subtitulo_fallback())
         r += 1
 
         # Obtener totales por partida del presupuesto para crear la tabla dinámica
@@ -884,10 +890,10 @@ class Constructor:
         headers_portada = ["Id", "Concepto", "Unidad", "Cantidad", "P.U.", "Importe"]
         for i, h in enumerate(headers_portada, 1):
             cell = ws.cell(row=r, column=i, value=h)
-            cell.font = DNA.font_header_tabla_fallback(blanco=True)
-            cell.fill = DNA.fill_verde_icel()
-            cell.border = DNA.border_header_tabla()
-            cell.alignment = DNA.align_center_nowrap()
+            cell.font = self.dna.font_header_tabla_fallback(blanco=True)
+            cell.fill = self.dna.fill_verde_icel()
+            cell.border = self.dna.border_header_tabla()
+            cell.alignment = self.dna.align_center_nowrap()
         r += 1
 
         primera_fila_concepto = None
@@ -900,14 +906,14 @@ class Constructor:
             if fila_inicio_partida is None or not nombre_partida_actual:
                 return
             merge_y_escribir(ws, f"B{r}:E{r}", f"Subtotal {nombre_partida_actual}",
-                             font=DNA.font_cuerpo_fallback(bold=True),
-                             alignment=DNA.align_left())
+                             font=self.dna.font_cuerpo_fallback(bold=True),
+                             alignment=self.dna.align_left())
             escribir_celda(ws, r, 6, f"=SUM(F{fila_inicio_partida}:F{r - 1})",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
+                           font=self.dna.font_moneda(bold=True),
+                           alignment=self.dna.align_right(),
                            number_format="$#,##0.00")
             for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
+                ws.cell(row=r, column=col).border = self.dna.border_celda()
             fila_inicio_partida = None
             nombre_partida_actual = ""
             r += 1
@@ -919,21 +925,21 @@ class Constructor:
                 _cerrar_partida()
                 nombre_partida_actual = item.get("nombre", "") or ""
                 merge_y_escribir(ws, f"A{r}:F{r}", f"PARTIDA: {nombre_partida_actual}",
-                                 font=DNA.font_partida(),
-                                 alignment=DNA.align_left())
+                                 font=self.dna.font_partida(),
+                                 alignment=self.dna.align_left())
                 for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_partida()
-                    ws.cell(row=r, column=col).fill = DNA.fill_verde_icel()
+                    ws.cell(row=r, column=col).border = self.dna.border_partida()
+                    ws.cell(row=r, column=col).fill = self.dna.fill_verde_icel()
                 r += 1
                 continue
 
             if tipo == "subpartida":
                 merge_y_escribir(ws, f"A{r}:F{r}", f"SUBPARTIDA: {item.get('nombre', '')}",
-                                 font=DNA.font_cuerpo_fallback(bold=True),
-                                 alignment=DNA.align_left())
+                                 font=self.dna.font_cuerpo_fallback(bold=True),
+                                 alignment=self.dna.align_left())
                 for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_celda()
-                    ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
+                    ws.cell(row=r, column=col).border = self.dna.border_celda()
+                    ws.cell(row=r, column=col).fill = self.dna.fill_verde_claro()
                 r += 1
                 continue
 
@@ -941,17 +947,17 @@ class Constructor:
             if primera_fila_concepto is None:
                 primera_fila_concepto = r
 
-            escribir_celda(ws, r, 1, item.get("id") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 2, item.get("descripcion") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_left())
-            escribir_celda(ws, r, 3, item.get("unidad") or "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
-            escribir_celda(ws, r, 4, item.get("cantidad"), font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center(), number_format="#,##0.00")
+            escribir_celda(ws, r, 1, item.get("id") or "", font=self.dna.font_cuerpo_fallback(), alignment=self.dna.align_center())
+            escribir_celda(ws, r, 2, item.get("descripcion") or "", font=self.dna.font_cuerpo_fallback(), alignment=self.dna.align_left())
+            escribir_celda(ws, r, 3, item.get("unidad") or "", font=self.dna.font_cuerpo_fallback(), alignment=self.dna.align_center())
+            escribir_celda(ws, r, 4, item.get("cantidad"), font=self.dna.font_cuerpo_fallback(), alignment=self.dna.align_center(), number_format="#,##0.00")
 
             # PU: referencia a la hoja APU (válida desde cualquier hoja) o valor del catálogo
             pu = item.get("pu")
             if pu is not None:
                 escribir_celda(ws, r, 5, pu,
-                               font=DNA.font_moneda(),
-                               alignment=DNA.align_right(),
+                               font=self.dna.font_moneda(),
+                               alignment=self.dna.align_right(),
                                number_format="$#,##0.00")
 
             # Importe: se calcula DENTRO de la Portada. En la Portada el P.U.
@@ -959,12 +965,12 @@ class Constructor:
             # F), así que el importe es =D{r}*E{r}. Copiar "=D8*F8" aquí
             # produciría una referencia circular (F sería la propia celda).
             escribir_celda(ws, r, 6, f"=D{r}*E{r}",
-                           font=DNA.font_cuerpo_fallback(),
-                           alignment=DNA.align_right(),
+                           font=self.dna.font_cuerpo_fallback(),
+                           alignment=self.dna.align_right(),
                            number_format="$#,##0.00")
 
             for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
+                ws.cell(row=r, column=col).border = self.dna.border_celda()
 
             # Ajustar altura según descripción
             descripcion = item.get("descripcion")
@@ -986,20 +992,20 @@ class Constructor:
                     num_part, titulo_part = nombre_part.split(" | ", 1)
                 else:
                     num_part, titulo_part = "", nombre_part
-                escribir_celda(ws, r, 1, num_part, font=DNA.font_partida(), alignment=DNA.align_center())
+                escribir_celda(ws, r, 1, num_part, font=self.dna.font_partida(), alignment=self.dna.align_center())
                 merge_y_escribir(ws, f"B{r}:F{r}", titulo_part,
-                                 font=DNA.font_partida(), alignment=DNA.align_left())
+                                 font=self.dna.font_partida(), alignment=self.dna.align_left())
                 for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_partida()
+                    ws.cell(row=r, column=col).border = self.dna.border_partida()
                 r += 1
-                escribir_celda(ws, r, 1, "", font=DNA.font_cuerpo_fallback(), alignment=DNA.align_center())
+                escribir_celda(ws, r, 1, "", font=self.dna.font_cuerpo_fallback(), alignment=self.dna.align_center())
                 merge_y_escribir(ws, f"B{r}:E{r}", "Subtotal " + nombre_part,
-                                 font=DNA.font_cuerpo_fallback(bold=True), alignment=DNA.align_left())
+                                 font=self.dna.font_cuerpo_fallback(bold=True), alignment=self.dna.align_left())
                 escribir_celda(ws, r, 6, f"=Presupuesto!{celda_sub}",
-                               font=DNA.font_moneda(bold=True), alignment=DNA.align_right(),
+                               font=self.dna.font_moneda(bold=True), alignment=self.dna.align_right(),
                                number_format="$#,##0.00")
                 for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_celda()
+                    ws.cell(row=r, column=col).border = self.dna.border_celda()
                 r += 1
 
         # --- FASE 3: TOTALES FINANCIEROS ---
@@ -1014,18 +1020,18 @@ class Constructor:
             """
             nonlocal r
             merge_y_escribir(ws, f"A{r}:E{r}", etiqueta,
-                             font=DNA.font_subtitulo_fallback() if not negrita
-                             else DNA.font_partida(size=12),
-                             alignment=DNA.align_right())
+                             font=self.dna.font_subtitulo_fallback() if not negrita
+                             else self.dna.font_partida(size=12),
+                             alignment=self.dna.align_right())
             if celda_presupuesto:
                 escribir_celda(ws, r, 6, f"=Presupuesto!{celda_presupuesto}",
-                               font=DNA.font_moneda(bold=negrita),
-                               alignment=DNA.align_right(),
+                               font=self.dna.font_moneda(bold=negrita),
+                               alignment=self.dna.align_right(),
                                number_format="$#,##0.00")
             for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
+                ws.cell(row=r, column=col).border = self.dna.border_celda()
                 if con_fill:
-                    ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
+                    ws.cell(row=r, column=col).fill = self.dna.fill_verde_claro()
             fila = r
             r += 1
             return fila
@@ -1044,29 +1050,29 @@ class Constructor:
         else:
             fila_iva = r
             merge_y_escribir(ws, f"A{r}:E{r}", "I.V.A. (16%)",
-                             font=DNA.font_subtitulo_fallback(),
-                             alignment=DNA.align_right())
+                             font=self.dna.font_subtitulo_fallback(),
+                             alignment=self.dna.align_right())
             escribir_celda(ws, r, 6, f"=F{fila_subtotal}*0.16",
-                           font=DNA.font_moneda(),
-                           alignment=DNA.align_right(),
+                           font=self.dna.font_moneda(),
+                           alignment=self.dna.align_right(),
                            number_format="$#,##0.00")
             for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
+                ws.cell(row=r, column=col).border = self.dna.border_celda()
             r += 1
         # Total (negrita, resaltado)
         if gran:
             _fila_total("Total", gran, negrita=True, con_fill=True)
         else:
             merge_y_escribir(ws, f"A{r}:E{r}", "Total",
-                             font=DNA.font_partida(size=12),
-                             alignment=DNA.align_right())
+                             font=self.dna.font_partida(size=12),
+                             alignment=self.dna.align_right())
             escribir_celda(ws, r, 6, f"=F{fila_subtotal}+F{fila_iva}",
-                           font=DNA.font_moneda(bold=True),
-                           alignment=DNA.align_right(),
+                           font=self.dna.font_moneda(bold=True),
+                           alignment=self.dna.align_right(),
                            number_format="$#,##0.00")
             for col in range(1, 7):
-                ws.cell(row=r, column=col).border = DNA.border_celda()
-                ws.cell(row=r, column=col).fill = DNA.fill_verde_claro()
+                ws.cell(row=r, column=col).border = self.dna.border_celda()
+                ws.cell(row=r, column=col).fill = self.dna.fill_verde_claro()
             r += 1
         r += 1
 
@@ -1110,19 +1116,19 @@ class Constructor:
 
         for seccion in secciones_notas:
             # Título de sección
-            escribir_celda(ws, r, 1, seccion["titulo"], font=DNA.font_subtitulo_fallback())
+            escribir_celda(ws, r, 1, seccion["titulo"], font=self.dna.font_subtitulo_fallback())
             r += 1
             
             for numero, texto in seccion["incisos"]:
-                escribir_celda(ws, r, 1, numero, font=DNA.font_cuerpo_fallback(size=10), alignment=DNA.align_center())
+                escribir_celda(ws, r, 1, numero, font=self.dna.font_cuerpo_fallback(size=10), alignment=self.dna.align_center())
                 merge_y_escribir(ws, f"B{r}:F{r}", texto,
-                                 font=DNA.font_cuerpo_fallback(size=10),
-                                 alignment=DNA.align_left())
+                                 font=self.dna.font_cuerpo_fallback(size=10),
+                                 alignment=self.dna.align_left())
                 # Ajustar altura de fila según longitud del texto
                 lineas_estimadas = max(1, (len(texto) // 65) + 1)
                 ws.row_dimensions[r].height = max(20, lineas_estimadas * 15)
                 for col in range(1, 7):
-                    ws.cell(row=r, column=col).border = DNA.border_celda()
+                    ws.cell(row=r, column=col).border = self.dna.border_celda()
                 r += 1
             
             r += 1  # espacio entre secciones
@@ -1133,28 +1139,28 @@ class Constructor:
         cargo_firmante = proyecto.get("cargo_firmante", "Director Operativo")
         
         merge_y_escribir(ws, f"A{r}:F{r}", firmante,
-                         font=DNA.font_partida(),
-                         alignment=DNA.align_center())
+                         font=self.dna.font_partida(),
+                         alignment=self.dna.align_center())
         r += 1
         merge_y_escribir(ws, f"A{r}:F{r}", cargo_firmante,
-                         font=DNA.font_subtitulo_fallback(),
-                         alignment=DNA.align_center())
+                         font=self.dna.font_subtitulo_fallback(),
+                         alignment=self.dna.align_center())
         r += 2
 
         # Insertar Pie de pagina.png ajustado al ancho de la tabla (columnas A-F)
         try:
-            footer_path = DNA.FOOTER_PATH
+            footer_path = self.dna.FOOTER_PATH
             if os.path.exists(footer_path):
                 img_footer = XLImage(footer_path)
                 # Escalar al ancho aproximado de 6 columnas (~1300px)
                 img_footer.width = 750
-                img_footer.height = DNA.FOOTER_ALTO
+                img_footer.height = self.dna.FOOTER_ALTO
                 ws.add_image(img_footer, f"A{r}")
         except Exception:
             pass
 
         # --- FASE 6: CONFIGURACIÓN DE PÁGINA ---
-        DNA.configurar_impresion(ws)
+        self.dna.configurar_impresion(ws)
 
     def escribir_presupuesto(self, resultados_matcheo: list[dict], proyecto: dict):
         """Llena la hoja Presupuesto con formato tipo catálogo (mockup OMA).
@@ -1753,6 +1759,7 @@ def construir_presupuesto(
     validar: bool = True,
     recalcular: bool = True,
     usar_pu_oficial: bool = True,
+    empresa: Optional[str] = None,
 ) -> Path:
     """Construye el presupuesto completo en un solo llamado.
 
@@ -1773,10 +1780,15 @@ def construir_presupuesto(
     canonico de costos: `v_concepto_pu.precio_unitario`
     (publicado > APU > manual). Con False se cotiza el PU que recalcula la
     hoja APU, de modo que editar Insumos mueve el total.
+
+    `empresa` selecciona el ADN visual (ej. 'icel'). None -> empresa por
+    defecto del ADN. Puede venir en proyecto['empresa'].
     """
+    empresa_efectiva = empresa or proyecto.get("empresa")
     c = Constructor(ruta_plantilla, carpeta_salida, usar_timestamp,
                     apu_provider=apu_provider, incluir_revision=incluir_revision,
-                    usar_pu_oficial=usar_pu_oficial)
+                    usar_pu_oficial=usar_pu_oficial,
+                    empresa=empresa_efectiva)
 
     print("[1/8] Copiando plantilla...")
     c.copiar_plantilla()
