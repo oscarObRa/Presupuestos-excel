@@ -41,6 +41,28 @@ COLUMNAS_5 = ["id", "partida", "concepto", "unidad", "cantidad"]
 PATRON_PARTIDA = re.compile(r"^\s*(PARTIDA|SUBPARTIDA|SUB-?PARTIDA)", re.IGNORECASE)
 
 
+def _columna_vacia(serie: pd.Series) -> bool:
+    """True si la serie no tiene ningún valor con contenido real."""
+    vals = serie.astype(str).str.strip().str.lower()
+    return bool(vals.isin(["", "nan", "none"]).all())
+
+
+def _descartar_columnas_fantasma(df: pd.DataFrame) -> pd.DataFrame:
+    """Elimina columnas 'Unnamed: N' totalmente vacías.
+
+    El Excel de entrada suele traer celdas con formato (bordes, colores) más
+    allá de la última columna de datos: pandas las lee como columnas fantasma
+    'Unnamed: 4', 'Unnamed: 5', ... y el archivo era rechazado aunque los
+    datos estuvieran bien. Si una columna 'Unnamed' SÍ tiene contenido, no se
+    descarta: el validador lo reportará con el mensaje de formato.
+    """
+    fantasma = [
+        col for col in df.columns
+        if re.match(r"^unnamed:", str(col)) and _columna_vacia(df[col])
+    ]
+    return df.drop(columns=fantasma) if fantasma else df
+
+
 def _es_fila_partida(row_id, concepto, unidad, cantidad) -> bool:
     """Determina si una fila es un encabezado de partida.
 
@@ -88,6 +110,10 @@ def leer_entrada(ruta: str, partida_default: str = "GENERAL") -> list[dict]:
 
     # Normalizar nombres de columna: strip, lowercase
     df.columns = [str(c).strip().lower() for c in df.columns]
+
+    # Celdas con formato sobrante generan columnas 'Unnamed: N' vacías que
+    # no alteran los datos: se descartan antes de validar el formato.
+    df = _descartar_columnas_fantasma(df)
     columnas_encontradas = list(df.columns)
 
     # Detectar formato

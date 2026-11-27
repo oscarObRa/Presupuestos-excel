@@ -14,6 +14,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 SUITES = [
     "test_matcher.py",
+    "test_lector.py",
     "test_constructor.py",
     "test_validador.py",
 ]
