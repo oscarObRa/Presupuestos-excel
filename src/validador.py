@@ -132,10 +132,19 @@ def _filas_concepto_presupuesto(ws) -> list[int]:
 
 
 def _es_fila_insumo_apu(ws, r: int) -> bool:
-    """Fila de insumo de una hoja APU (columna A = clave, D = cantidad)."""
+    """Fila de insumo de una hoja APU (columna A = clave, D = cantidad).
+
+    Las filas '%' (unidad p.ej. '(%)MO': herramienta menor 3%, seguridad 2%)
+    NO son insumos: son porcentajes sobre el subtotal de Mano de Obra que se
+    calculan dentro de la propia hoja APU. No se sembraron en Insumos a
+    propósito, así que los checks de claves y unidades las exentan.
+    """
     clave = ws.cell(row=r, column=1).value
     cant = ws.cell(row=r, column=4).value
-    return isinstance(clave, str) and clave.strip() != "" and isinstance(cant, (int, float))
+    if not (isinstance(clave, str) and clave.strip() != "" and isinstance(cant, (int, float))):
+        return False
+    unidad = str(ws.cell(row=r, column=3).value or "")
+    return "%" not in unidad.upper()
 
 
 def _normalizar_unidad(unidad: str) -> str:

@@ -275,10 +275,16 @@ class Constructor:
             if not apu:
                 continue
             cantidad_obra = float(res.get("cantidad", 0) or 0)
+            # La clave de agregación es (clave general, unidad): el mismo
+            # insumo usado en unidades distintas entre matrices NO es el mismo
+            # recurso (varilla por KG vs por PZA; la trampa del KG vs TON).
+            from src.matcher import normalizar_unidad as _norm_u
             for ins in apu.get("insumos", []):
-                k = ins.get("clave")
-                if not k:
+                clave_gen = ins.get("clave")
+                if not clave_gen:
                     continue
+                u_norm = _norm_u(ins.get("unidad", ""))
+                k = (str(clave_gen), u_norm)
                 # Las lineas '%' de las matrices (p.ej. unidad '(%)MO':
                 # HERRAMIENTA MENOR 5%, EQUIPO DE SEGURIDAD 3%) NO son insumos:
                 # 'cantidad' es la fraccion y 'costo' es el subtotal de MO de
@@ -379,7 +385,7 @@ class Constructor:
             celda_i = ws.cell(row=fila, column=9, value=round(tasa, 4))
             celda_i.number_format = "$#,##0.00"
             ws.cell(row=fila, column=10,
-                    value=f"{a.get('desc', '')} (origen: {clave_general})")
+                    value=f"{a.get('desc', '')} (origen: {clave_general[0]})")
             fila += 1
 
         if cuadrillas:
@@ -472,7 +478,9 @@ class Constructor:
                            alignment=align_right, number_format="$#,##0.00")
             escribir_celda(ws, r, 8, "Cuadrilla" if es_cuadrilla else "",
                            font=font_normal, alignment=align_left)
-            escribir_celda(ws, r, 9, k, font=font_normal, alignment=align_center)
+            # La clave de agregación es (clave, unidad); la columna 'Clave
+            # origen' muestra la clave general.
+            escribir_celda(ws, r, 9, k[0], font=font_normal, alignment=align_center)
             aplicar_borde(ws, r, 1, 9)
             r += 1
 
@@ -701,7 +709,16 @@ class Constructor:
                 iclave = ins.get("clave", "")
                 unidad_ins = str(ins.get("unidad", ""))
                 es_pct_mo = "%" in unidad_ins.upper()
-                id_local = self._id_local_insumo.get(iclave, iclave)
+                if es_pct_mo:
+                    # Las filas '%' no son insumos: su columna A conserva la
+                    # clave cruda de la matriz ('%MO1', 'FACHEME', ...). El id
+                    # local de esa clave, si existiera, pertenece a la MISMA
+                    # clave con unidad REAL (p.ej. la cuadrilla HESEG-001 en
+                    # 'jor') y no debe prestarse a esta línea.
+                    id_local = iclave
+                else:
+                    from src.matcher import normalizar_unidad as _norm_u
+                    id_local = self._id_local_insumo.get((iclave, _norm_u(unidad_ins)), iclave)
                 escribir_celda(ws, fila, 1, id_local, font=font_normal, alignment=align_center)
                 escribir_celda(ws, fila, 2, ins.get("descripcion", ""), font=font_normal, alignment=align_left)
                 escribir_celda(ws, fila, 3, unidad_ins, font=font_normal, alignment=align_center)
