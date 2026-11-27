@@ -339,6 +339,11 @@ class ProveedorAPU:
             return a
         am = dict(am)
         am["fuente"] = "matrices"
+        # El PU que la matriz calcula por sí misma se conserva aparte: es la
+        # señal de sanidad del desglose (si la matriz da un PU absurdo frente
+        # al oficial, el desglose no es confiable y la línea debe revisarse).
+        am["pu_matriz"] = float(am.get("pu") or 0)
+        am["costo_directo_matriz"] = float(am.get("costo_directo") or 0)
         if oficial:
             pu_oficial = float(oficial.get("precio_unitario") or 0)
             am["pu_oficial"] = pu_oficial

@@ -803,8 +803,16 @@ class Constructor:
             del self.wb["Portada"]
         ws = self.wb.create_sheet("Portada", 0)
 
-        # Configurar hoja limpia (sin cuadrícula) y anchos estándar
+        # Hoja limpia (sin cuadrícula). La retícula del ADN (A:Q) NO se aplica
+        # aquí todavía: esta Portada aún escribe en 6 columnas y los anchos de
+        # la retícula la destrozan (columnas de 1.5 con descripciones largas).
+        # PENDIENTE: reescribir esta hoja con la retícula A:Q del ADN y el
+        # CELL_MAP (docs/ADN_ICEL.md), tomando como referencia la carátula
+        # original (H:/Mi unidad/ICEL/PUs/CASA VENADO/caratula.xlsx).
         self.dna.configurar_hoja_limpia(ws)
+        anchos_portada = {"A": 8, "B": 65, "C": 12, "D": 12, "E": 16, "F": 18}
+        for col, ancho in anchos_portada.items():
+            ws.column_dimensions[col].width = ancho
 
         # --- FASE 1: ENCABEZADO CORPORATIVO Y METADATOS ---
         r = 1
@@ -1295,11 +1303,25 @@ class Constructor:
         def _es_revisar(res) -> bool:
             if res.get("estado") in ("confirmado", "confirmado_ia"):
                 return False
-            pu = res.get("pu_sugerido") or 0
+            id_entrada = res.get("id_entrada", "")
             u = _norm_uni(res.get("unidad_entrada", ""))
             med = _mediana.get(u, 0)
+
+            # PU estático cotizado (modo oficial) o sugerido
+            pu = res.get("pu_sugerido") or 0
             if med > 0 and pu > 12 * med:
                 return True
+
+            # Modo fórmula: el PU cotizado será el de la hoja APU, que puede
+            # venir de la matriz (fuente no contractual). Si ese desglose da un
+            # PU absurdo frente a la mediana de su unidad, se marca para
+            # revisar aunque el PU oficial del catálogo parezca normal
+            # (caso K78.7: oficial $1,369 vs matriz $826,546).
+            apu = self.apu_por_clave.get(id_entrada)
+            if apu:
+                pu_desglose = float(apu.get("pu_matriz") or apu.get("pu_apu") or 0)
+                if med > 0 and pu_desglose > 12 * med:
+                    return True
             return False
 
         r = fila_header + 1
