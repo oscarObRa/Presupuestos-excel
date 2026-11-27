@@ -298,6 +298,48 @@ def test_hoja_apu_muestra_pu_oficial():
         wb.close()
 
 
+def test_lineas_porcentaje_mo():
+    print("\n13. Las líneas '%' de la matriz son % del subtotal MO, no insumos")
+    from tests.fixtures import APU_CAT002, construir_de_prueba
+    import copy
+
+    apu_pct = copy.deepcopy(APU_CAT002)
+    apu_pct["insumos"].append({
+        "tipo": "equipo", "clave": "%MOHM",
+        "descripcion": "HERRAMIENTA MENOR", "unidad": "(%)MO",
+        # Semántica de matriz: cantidad = fracción (5%), costo = subtotal de
+        # MO de esa matriz (NO un costo unitario).
+        "cantidad": 0.05, "costo": 579.36, "total": 28.97,
+    })
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta, _, _ = construir_de_prueba(tmp, apus={"CAT-002": apu_pct})
+        wb = openpyxl.load_workbook(ruta)
+
+        # 1) La línea % NO se siembra en Insumos
+        ins = wb["Insumos"]
+        sembradas = [r for r in range(5, ins.max_row + 1)
+                     if "%" in str(ins.cell(row=r, column=4).value or "")]
+        check(not sembradas, f"no hay líneas '%' en Insumos (filas: {sembradas})")
+
+        # 2) En la hoja APU la línea % apunta al subtotal de Mano de Obra
+        ws = wb["CIM-02"]
+        fila_mo = next((r for r in range(1, ws.max_row + 1)
+                        if str(ws.cell(row=r, column=2).value or "").strip() == "Mano de Obra"),
+                       None)
+        check(fila_mo is not None, "la hoja APU tiene sección 'Mano de Obra'")
+        fila_pct = next((r for r in range(1, ws.max_row + 1)
+                         if "(%)MO" in str(ws.cell(row=r, column=3).value or "")), None)
+        check(fila_pct is not None, "la hoja APU conserva la línea '%MO'")
+        if fila_mo and fila_pct:
+            e_pct = ws.cell(row=fila_pct, column=5).value
+            check(e_pct == f"=F{fila_mo}",
+                  f"el costo de la línea % referencia al subtotal MO (fue {e_pct!r})")
+            d_pct = ws.cell(row=fila_pct, column=4).value
+            check(abs(float(d_pct) - 0.05) < 1e-6,
+                  f"la fracción de la línea % es 0.05 (fue {d_pct!r})")
+        wb.close()
+
+
 def main():
     print("=== PRUEBAS DE CONSTRUCTOR ===")
     test_portada_sin_duplicados()
@@ -312,6 +354,7 @@ def main():
     test_modo_cotizar_apu()
     test_revision_muestra_trazabilidad_del_precio()
     test_hoja_apu_muestra_pu_oficial()
+    test_lineas_porcentaje_mo()
 
     print("\n" + "=" * 50)
     if FALLOS:

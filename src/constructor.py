@@ -279,6 +279,14 @@ class Constructor:
                 k = ins.get("clave")
                 if not k:
                     continue
+                # Las lineas '%' de las matrices (p.ej. unidad '(%)MO':
+                # HERRAMIENTA MENOR 5%, EQUIPO DE SEGURIDAD 3%) NO son insumos:
+                # 'cantidad' es la fraccion y 'costo' es el subtotal de MO de
+                # ESA matriz, no un costo unitario. Sembrarlas en Insumos
+                # propagaba subtotales de MO como costos unitarios (PU de
+                # 663 mil). Se calculan en la hoja APU como % del subtotal MO.
+                if "%" in str(ins.get("unidad", "")).upper():
+                    continue
                 a = agg.get(k)
                 if a is None:
                     es_cuadrilla = ins.get("tipo", "").lower() in ("cuadrilla", "mano_obra")
@@ -669,6 +677,7 @@ class Constructor:
         rango_ins = f"Insumos!$A$5:$G${getattr(self, '_fila_insumos_fin', 5)}"
         fila = 5
         cd_parts = []
+        fila_mo: Optional[int] = None   # fila del subtotal de Mano de Obra
         for tipo in ord_secciones:
             items = por_tipo.get(tipo)
             if not items:
@@ -686,18 +695,30 @@ class Constructor:
             aplicar_borde(ws, fila, 1, 7)
             fila_sec = fila
             fila += 1
+            if tipo == "mano_obra":
+                fila_mo = fila_sec
             for ins in items:
                 iclave = ins.get("clave", "")
+                unidad_ins = str(ins.get("unidad", ""))
+                es_pct_mo = "%" in unidad_ins.upper()
                 id_local = self._id_local_insumo.get(iclave, iclave)
                 escribir_celda(ws, fila, 1, id_local, font=font_normal, alignment=align_center)
                 escribir_celda(ws, fila, 2, ins.get("descripcion", ""), font=font_normal, alignment=align_left)
-                escribir_celda(ws, fila, 3, ins.get("unidad", ""), font=font_normal, alignment=align_center)
+                escribir_celda(ws, fila, 3, unidad_ins, font=font_normal, alignment=align_center)
                 escribir_celda(ws, fila, 4, round(float(ins.get("cantidad", 0) or 0), 6),
                                font=font_normal, alignment=align_right, number_format="#,##0.0000")
-                # costo unitario desde Insumos (editable) - recálculo vivo
-                costo_formula = f"=IFERROR(VLOOKUP(A{fila},{rango_ins},{5},FALSE),{float(ins.get('costo',0) or 0)})"
-                escribir_celda(ws, fila, 5, costo_formula, font=font_normal,
-                               alignment=align_right, number_format="$#,##0.00")
+                if es_pct_mo and fila_mo:
+                    # Linea '%' de la matriz (p.ej. HERRAMIENTA MENOR 5% MO):
+                    # D = fraccion y E = subtotal MO de esta hoja, asi que
+                    # Importe = D*E = fraccion x MO, igual que la matriz. No se
+                    # consulta Insumos (esta linea no es un insumo real).
+                    escribir_celda(ws, fila, 5, f"=F{fila_mo}", font=font_normal,
+                                   alignment=align_right, number_format="$#,##0.00")
+                else:
+                    # costo unitario desde Insumos (editable) - recálculo vivo
+                    costo_formula = f"=IFERROR(VLOOKUP(A{fila},{rango_ins},{5},FALSE),{float(ins.get('costo',0) or 0)})"
+                    escribir_celda(ws, fila, 5, costo_formula, font=font_normal,
+                                   alignment=align_right, number_format="$#,##0.00")
                 escribir_celda(ws, fila, 6, f"=D{fila}*E{fila}", font=font_negrita,
                                alignment=align_right, number_format="$#,##0.00")
                 escribir_celda(ws, fila, 7, iclave, font=font_normal, alignment=align_center)
