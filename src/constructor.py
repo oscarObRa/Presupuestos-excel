@@ -60,7 +60,7 @@ class Constructor:
     def __init__(self, ruta_plantilla: str, carpeta_salida: str = "salidas",
                  usar_timestamp: bool = False, apu_provider=None,
                  incluir_revision: bool = False,
-                 usar_pu_oficial: bool = True,
+                 usar_pu_oficial: bool = False,
                  empresa: Optional[str] = None):
         # ADN visual por empresa: la identidad (colores, retícula, assets,
         # membrete) se resuelve aquí y NUNCA se hardcodea en los métodos.
@@ -72,10 +72,12 @@ class Constructor:
         self.usar_timestamp = usar_timestamp
         self.apu_provider = apu_provider
         self.incluir_revision = incluir_revision
-        # Regla del modelo canonico de costos: mientras exista un PU publicado,
-        # el PU que manda es `v_concepto_pu.precio_unitario` (publicado > APU >
-        # manual). Con usar_pu_oficial=False se cotiza el PU recalculado por la
-        # hoja APU (recalculo vivo al editar Insumos).
+        # Regla de cotizacion: el PU NACE del SQL/catalogo de costeo (semilla),
+        # pero una vez en el libro es de Excel: el Presupuesto queda ligado con
+        # formula a la celda PU DE VENTA de la hoja APU, que hace VLOOKUP a
+        # Insumos — editar Insumos mueve PU y total. El PU oficial del catalogo
+        # queda como fila de referencia en la hoja APU y en Revision.
+        # Con usar_pu_oficial=True se vuelve al modo estatico (PU congelado).
         self.usar_pu_oficial = usar_pu_oficial
         self.wb: Optional[openpyxl.Workbook] = None
         self.ruta_salida: Optional[Path] = None
@@ -1558,9 +1560,10 @@ class Constructor:
 
         escribir_celda(ws, r, 5, unidad, font=font_normal, alignment=align_center)
 
-        # PU: el oficial del modelo canonico (publicado > APU > manual) o, si
-        # se pidio cotizar el APU, la celda PU DE VENTA de la hoja APU
-        # (recalculo vivo al editar Insumos).
+        # PU: por defecto, formula viva a la celda PU DE VENTA de la hoja APU
+        # (VLOOKUP a Insumos: editar Insumos mueve el total). El PU del SQL es
+        # solo la semilla. Con usar_pu_oficial=True se congela el oficial del
+        # catalogo como valor estatico (modo opt-in).
         if revisar:
             escribir_celda(ws, r, 6, 0, font=font_normal_rojo,
                            alignment=align_right, number_format="$#,##0.00")
@@ -1759,7 +1762,7 @@ def construir_presupuesto(
     incluir_revision: bool = False,
     validar: bool = True,
     recalcular: bool = True,
-    usar_pu_oficial: bool = True,
+    usar_pu_oficial: bool = False,
     empresa: Optional[str] = None,
 ) -> Path:
     """Construye el presupuesto completo en un solo llamado.
@@ -1771,16 +1774,18 @@ def construir_presupuesto(
       4. Cuadrillas (filas locales de las cuadrillas usadas)
       5. Insumos (lista de materiales agregada de los APUs, con IDs locales)
       6. Hojas APU (una por concepto con matriz)
-      7. Presupuesto (PU: oficial del modelo canonico, o el de la hoja APU)
+      7. Presupuesto (PU: formula viva a la hoja APU, o el oficial estatico)
       8. Portada
       9. Guardar
      10. Validar el libro (opcional; si hay errores se copia como
          presupuesto_con_errores.xlsx)
 
-    `usar_pu_oficial=True` (default) cotiza el PU que manda en el modelo
-    canonico de costos: `v_concepto_pu.precio_unitario`
-    (publicado > APU > manual). Con False se cotiza el PU que recalcula la
-    hoja APU, de modo que editar Insumos mueve el total.
+    Regla de cotizacion: el PU nace del SQL/catalogo de costeo (semilla), pero
+    en el libro queda vivo: el Presupuesto referencia con formula la celda
+    PU DE VENTA de la hoja APU (VLOOKUP a Insumos), de modo que editar
+    Insumos en Excel mueve el PU y el total. Con `usar_pu_oficial=True` se
+    congela el PU oficial del catalogo (v_concepto_pu.precio_unitario,
+    publicado > APU > manual) como valor estatico.
 
     `empresa` selecciona el ADN visual (ej. 'icel'). None -> empresa por
     defecto del ADN. Puede venir en proyecto['empresa'].

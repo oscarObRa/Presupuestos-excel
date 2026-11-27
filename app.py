@@ -113,12 +113,13 @@ with st.sidebar:
     )
 
     cotizar_apu = st.checkbox(
-        "Cotizar el PU del APU (en vez del oficial del catálogo)",
-        value=False,
-        help=("Por defecto se cotiza el PU oficial del catálogo, como define el "
-              "modelo canónico de costos (publicado > APU > manual). Con esta "
-              "opción se cotiza el PU que recalcula la hoja APU, de modo que "
-              "editar la hoja Insumos mueve el total."),
+        "PU con fórmulas vivas (editar Insumos mueve el total)",
+        value=True,
+        help=("El PU nace del catálogo de costeo (semilla), pero en el libro "
+              "queda ligado con fórmula a la hoja APU (que a su vez lee "
+              "Insumos): si luego editas precios en Excel, el PU y el total "
+              "se recalculan solos. Desactívalo solo si necesitas congelar "
+              "el PU oficial del catálogo como valor fijo."),
     )
 
     st.divider()

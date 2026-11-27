@@ -31,8 +31,8 @@ def check(condicion, mensaje):
         FALLOS.append(mensaje)
 
 
-def _libro_limpio(tmp):
-    ruta, _, _ = construir_de_prueba(tmp)
+def _libro_limpio(tmp, usar_pu_oficial=False):
+    ruta, _, _ = construir_de_prueba(tmp, usar_pu_oficial=usar_pu_oficial)
     return ruta
 
 
@@ -243,7 +243,10 @@ def test_detecta_cuadrilla_en_cero():
 def test_avisa_pu_distinto_del_oficial():
     print("\n11. Avisa cuando el PU cotizado difiere del oficial del catálogo")
     with tempfile.TemporaryDirectory() as tmp:
-        ruta = _libro_limpio(tmp)
+        # Modo estático: el PU queda como valor fijo (350) y la divergencia se
+        # puede verificar sin recalcular con Excel. En modo fórmula (default)
+        # el PU cotizado solo se conoce tras recalcular la hoja APU.
+        ruta = _libro_limpio(tmp, usar_pu_oficial=True)
         import src.validador as V
 
         # Simular la BD canónica: el catálogo oficial de CAT-002 es 500 y el
@@ -268,7 +271,7 @@ def test_avisa_pu_distinto_del_oficial():
 def test_no_avisa_si_pu_coincide():
     print("\n12. No avisa cuando el PU cotizado coincide con el oficial")
     with tempfile.TemporaryDirectory() as tmp:
-        ruta = _libro_limpio(tmp)
+        ruta = _libro_limpio(tmp, usar_pu_oficial=True)
         import src.validador as V
 
         original = V._pu_oficiales

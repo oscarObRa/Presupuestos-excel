@@ -204,9 +204,9 @@ def test_cuadrillas_registradas_con_id_local():
 
 
 def test_pu_oficial_se_cotiza():
-    print("\n9. El PU cotizado es el oficial del modelo canónico")
+    print("\n9. Con usar_pu_oficial=True (modo estático opt-in) se cotiza el PU oficial")
     with tempfile.TemporaryDirectory() as tmp:
-        ruta, _, _ = construir_de_prueba(tmp)
+        ruta, _, _ = construir_de_prueba(tmp, usar_pu_oficial=True)
         wb = openpyxl.load_workbook(ruta)
         ws = wb["Presupuesto"]
         # CAT-002: PU oficial 350, PU del APU 372.5 -> debe cotizar 350
@@ -225,9 +225,9 @@ def test_pu_oficial_se_cotiza():
 
 
 def test_modo_cotizar_apu():
-    print("\n10. Con usar_pu_oficial=False se cotiza el PU de la hoja APU")
+    print("\n10. Por defecto el PU queda ligado con fórmula a la hoja APU (Excel vivo)")
     with tempfile.TemporaryDirectory() as tmp:
-        ruta, _, _ = construir_de_prueba(tmp, usar_pu_oficial=False)
+        ruta, _, _ = construir_de_prueba(tmp)
         wb = openpyxl.load_workbook(ruta)
         ws = wb["Presupuesto"]
         fila = None

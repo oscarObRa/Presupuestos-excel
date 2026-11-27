@@ -138,11 +138,12 @@ def main(
         help="Archivo .xlsx de entrada (si la ruta tiene espacios, no hace falta comillas)",
     ),
     cotizar_apu: bool = typer.Option(
-        False,
-        "--cotizar-apu",
-        help=("Cotiza el PU que recalcula la hoja APU en vez del PU oficial del "
-              "catalogo (regla del modelo canonico: publicado > APU > manual). "
-              "Con esta opcion, editar Insumos mueve el total."),
+        True,
+        "--cotizar-apu/--pu-oficial-estatico",
+        help=("PU con formulas vivas (default): el PU nace del catalogo de "
+              "costeo pero queda ligado a la hoja APU (VLOOKUP a Insumos), "
+              "asi editar Insumos mueve el total. Con --pu-oficial-estatico "
+              "se congela el PU oficial del catalogo como valor fijo."),
     ),
 ):
     """Genera un presupuesto de construccion en Excel.
@@ -385,9 +386,9 @@ def main(
     )
     ok("Presupuesto construido")
     if cotizar_apu:
-        console.print("  [dim]PU cotizado: el que recalcula la hoja APU[/]")
+        console.print("  [dim]PU cotizado: formula viva a la hoja APU (editar Insumos mueve el total)[/]")
     else:
-        console.print("  [dim]PU cotizado: el oficial del catalogo (modelo canonico)[/]")
+        console.print("  [dim]PU cotizado: el oficial del catalogo congelado (valor estatico)[/]")
 
     # =====================================================================
     # 6. EXPORTAR PDF (Presupuesto + cada APU)

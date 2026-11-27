@@ -172,7 +172,7 @@ def matcher_de_prueba(cliente=None, **kwargs):
 
 def construir_de_prueba(carpeta_salida, validar=False, recalcular=False,
                         entrada=None, apus=None, incluir_revision=False,
-                        usar_pu_oficial=True):
+                        usar_pu_oficial=False):
     """Construye un presupuesto de prueba y devuelve (ruta, resultados, matcher)."""
     from src.constructor import construir_presupuesto
 
