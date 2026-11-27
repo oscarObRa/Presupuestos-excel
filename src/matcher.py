@@ -348,6 +348,68 @@ class Matcher:
                 return alt_txt
         return desc
 
+    def candidatos_para_ia(self, texto: str, unidad: str = "", n: int = 8) -> list[dict]:
+        """Top-N candidatos por similitud SIN cortes de umbral ni de unidad.
+
+        Para la IA. `_emparejar_uno` filtra candidatos por unidad y umbral
+        porque auto-aplicar un precio de otra unidad es peligroso; pero la IA
+        es un juez semántico: puede evaluar candidatos que el matcher
+        mecánico no puede usar y devolver null. Sirve sobre todo para
+        conceptos que quedaron `sin_match` con 0 candidatos (todo fue
+        filtrado): sin esto la IA nunca los veía y no podía ayudar.
+
+        Los candidatos se ordenan primero los de la misma unidad (la IA
+        respeta la unidad, así que verlos separados ayuda a decidir).
+        """
+        q_tokens = set(tokens(texto))
+        if not q_tokens:
+            return []
+        q_str = " ".join(sorted(q_tokens))
+        desc_norm = normalizar(texto)
+        q_uni = normalizar_unidad(unidad)
+
+        # 1) Fuzzy sobre TODOS los conceptos (sin corte por unidad ni umbral)
+        idxs = set()
+        for _, _, idx in process.extract(q_str, self._tstr,
+                                         scorer=fuzz.token_set_ratio,
+                                         limit=max(n * 4, 40)):
+            idxs.add(idx)
+        # 2) Búsqueda oficial del contrato (si el cliente la expone)
+        try:
+            for o in self.cliente.buscar(texto, limite=max(n * 2, 10)):
+                for idx in self._clave_a_idx.get(str(o.get("clave")), ()):
+                    idxs.add(idx)
+        except Exception:
+            pass
+
+        evaluados = []
+        for idx in idxs:
+            c = self._conceptos[idx]
+            tset = self._tset[idx]
+            hay = sum(1 for t in q_tokens
+                      if t in tset or any(x.startswith(t) for x in tset))
+            cand_norm = normalizar(c.get("descripcion"))
+            sc = min(
+                fuzz.token_set_ratio(cand_norm, desc_norm),
+                fuzz.token_sort_ratio(cand_norm, desc_norm) + 12,
+            )
+            cov = hay / len(q_tokens)
+            comb = 0.6 * sc + 0.4 * cov * 100
+            evaluados.append((comb, self._unidad[idx] == q_uni, idx))
+        evaluados.sort(key=lambda x: (x[1], x[0]), reverse=True)
+        return [self._candidato_dict(idx, comb) for comb, _, idx in evaluados[:n]]
+
+    def _candidato_dict(self, idx: int, score: float) -> dict:
+        """Dict de candidato en el mismo formato que los de _emparejar_uno."""
+        c = self._conceptos[idx]
+        return {
+            "clave": c.get("clave", ""),
+            "descripcion": self._desc_mostrable(c),
+            "unidad": c.get("unidad", ""),
+            "precio_unitario": c.get("precio_unitario", 0),
+            "score": round(score, 1),
+        }
+
     def _concepto_exacto(self, desc_norm: str, unidad_norm: str) -> Optional[dict]:
         """Concepto con descripción EXACTA y la MISMA unidad (normalizada).
 

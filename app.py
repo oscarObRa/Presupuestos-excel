@@ -311,9 +311,10 @@ if generar or regenerar:
                         st.write(f"Consultando IA ({pend} conceptos dudosos/sin match)...")
                         try:
                             from src.llm import aplicar_sugerencias
-                            sugerencias = _llm.resolver(resultados)
+                            sugerencias = _llm.resolver(resultados, buscar=matcher.candidatos_para_ia)
                             aplicadas = aplicar_sugerencias(resultados, cost_client, sugerencias,
-                                                            auto_aplicar=_llm_cfg.get("auto_aplicar", True))
+                                                            auto_aplicar=_llm_cfg.get("auto_aplicar", True),
+                                                            confianza_minima=_llm_cfg.get("confianza_minima", 0.85))
                             st.write(f"✓ IA revisó {len(sugerencias)}, aplicó {aplicadas}")
                             stats = matcher.stats_matcheo(resultados)
                         except Exception as eia:

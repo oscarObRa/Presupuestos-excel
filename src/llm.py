@@ -62,7 +62,14 @@ MODELOS_RECOMENDADOS = {
 
 def _leer_env_archivo(ruta: str = ".env") -> dict:
     """Lee un .env simple (KEY=VALUE) sin dependencias.
-    También lee archivos individuales en .secrets/ (un archivo por variable)."""
+    También lee archivos individuales en .secrets/ (un archivo por variable).
+
+    En `.secrets/` el contenido del archivo ES el valor. Se ignoran líneas
+    vacías y comentarios (`#`): si el usuario guardó ahí una plantilla con
+    instrucciones, no se convierte en una API key corrupta (caso real: el
+    header `Bearer # Pon tu...` producía InvalidHeader y la IA fallaba en
+    silencio).
+    """
     datos = {}
     # 1. Archivo .env tradicional
     p = Path(ruta)
@@ -80,9 +87,18 @@ def _leer_env_archivo(ruta: str = ".env") -> dict:
         for archivo in secrets_dir.iterdir():
             if archivo.is_file() and not archivo.name.startswith("."):
                 try:
-                    valor = archivo.read_text(encoding="utf-8", errors="ignore").strip()
                     # El nombre del archivo es la variable (ej. DEEPSEEK_API_KEY)
-                    datos[archivo.name] = valor.strip().strip('"').strip("'")
+                    # y el contenido es el valor: primera línea real, sin
+                    # comentarios ni líneas en blanco.
+                    valor = ""
+                    for linea in archivo.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        linea = linea.strip()
+                        if not linea or linea.startswith("#"):
+                            continue
+                        valor = linea
+                        break
+                    if valor:
+                        datos[archivo.name] = valor.strip().strip('"').strip("'")
                 except Exception:
                     pass
     
@@ -130,6 +146,7 @@ def cargar_config_llm(config_path: str = "config.yaml") -> dict:
         "max_items": int(cfg.get("max_items", 200)),
         "max_candidatos": int(cfg.get("max_candidatos", 8)),
         "auto_aplicar": bool(cfg.get("auto_aplicar", True)),
+        "confianza_minima": float(cfg.get("confianza_minima", 0.85)),
     }
 
 
@@ -169,6 +186,9 @@ class ClienteLLM:
         self.model = cfg.get("model", "")
         self.base_url = (cfg.get("base_url") or "").rstrip("/")
         self.api_key = cfg.get("api_key", "")
+        # Último error de comunicación (para diagnóstico: antes los fallos de
+        # red/parseo se tragaban y "IA revisó 0" no explicaba nada).
+        self.ultimo_error: str = ""
 
     @property
     def disponible(self) -> bool:
@@ -203,12 +223,27 @@ class ClienteLLM:
             ],
             "response_format": {"type": "json_object"},
         }
-        try:
-            r = requests.post(url, headers=headers, json=payload, timeout=90)
-        except Exception:
+        # Redes con inspección SSL/proxy corporativo fallan de forma
+        # intermitente ('self-signed certificate in certificate chain'): el
+        # reintento con espera resuelve la mayoría de los cortes.
+        ultimo_exc = None
+        for intento in range(3):
+            try:
+                r = requests.post(url, headers=headers, json=payload, timeout=90)
+                break
+            except Exception as e:
+                ultimo_exc = e
+                if intento < 2:
+                    import time
+                    time.sleep(2 + 2 * intento)
+        else:
+            self.ultimo_error = (f"sin conexión con {self.base_url} (3 intentos): "
+                                 f"{type(ultimo_exc).__name__}: {ultimo_exc}")
             return []
 
         if r.status_code != 200:
+            cuerpo = (r.text or "")[:300]
+            self.ultimo_error = f"HTTP {r.status_code} de {self.provider}: {cuerpo}"
             return []
 
         try:
@@ -218,12 +253,23 @@ class ClienteLLM:
             parsed = json.loads(content)
             res = parsed.get("resultados", parsed if isinstance(parsed, list) else [])
             return res if isinstance(res, list) else []
-        except Exception:
+        except Exception as e:
+            cuerpo = (r.text or "")[:200]
+            self.ultimo_error = f"respuesta no parseable de {self.provider}: {type(e).__name__}: {e} | cuerpo: {cuerpo}"
             return []
 
     # -- resolución -----------------------------------------------------
-    def resolver(self, resultados: list[dict]) -> list[dict]:
-        """Resuelve los conceptos dudosos/sin match. Devuelve sugerencias."""
+    def resolver(self, resultados: list[dict], buscar=None) -> list[dict]:
+        """Resuelve los conceptos dudosos/sin match. Devuelve sugerencias.
+
+        Args:
+            buscar: callable opcional (concepto, unidad) -> list[dict]. Se usa
+                para dar candidatos a los conceptos que quedaron sin ninguno
+                (todo filtrado por unidad / sin solapamiento de tokens): la IA
+                puede juzgarlos semánticamente aunque el matcher no confíe en
+                ellos. Sin `buscar`, esos conceptos quedan fuera del alcance
+                de la IA (comportamiento anterior).
+        """
         if not self.disponible:
             return []
 
@@ -233,6 +279,14 @@ class ClienteLLM:
             if r.get("estado") not in ("dudoso", "sin_match"):
                 continue
             cands = r.get("candidatos") or []
+            if not cands and buscar is not None:
+                try:
+                    cands = buscar(r.get("concepto_entrada", ""),
+                                   r.get("unidad_entrada", ""))
+                except Exception:
+                    cands = []
+                if cands:
+                    r["candidatos_busqueda"] = True  # trazabilidad en Revision
             if not cands:
                 continue
             pendientes.append(r)
@@ -268,6 +322,11 @@ class ClienteLLM:
             resp = self._llamar(items)
             sugerencias.extend(resp)
 
+        # Si no llegó nada y hubo errores de comunicación, NO callar: la web
+        # captura esta excepción y muestra la causa real en un warning.
+        if not sugerencias and self.ultimo_error:
+            raise RuntimeError(f"IA sin resultados — {self.ultimo_error}")
+
         return sugerencias
 
 
@@ -286,11 +345,15 @@ def _limpiar_json(texto: str) -> str:
 
 
 def aplicar_sugerencias(resultados: list[dict], indice, sugerencias: list[dict],
-                        auto_aplicar: bool = True) -> int:
+                        auto_aplicar: bool = True,
+                        confianza_minima: float = 0.85) -> int:
     """Escribe las sugerencias de la IA en los resultados.
 
     - Guarda clave_ia, confianza_ia, motivo_ia (para la hoja Revisión).
-    - Si auto_aplicar y la clave es válida, actualiza clave_sugerida / PU / estado.
+    - Si auto_aplicar y la clave es válida y la confianza >= confianza_minima,
+      actualiza clave_sugerida / PU / estado. Con confianza menor la clave IA
+      queda SOLO como sugerencia visible en Revision: la IA sugiere, el
+      usuario confirma (principio del workbench, docs/funciones_futuro.md 7).
 
     Devuelve cuántas sugerencias aplicadas al presupuesto.
     """
@@ -319,7 +382,7 @@ def aplicar_sugerencias(resultados: list[dict], indice, sugerencias: list[dict],
         r["confianza_ia"] = conf
         r["motivo_ia"] = motivo
 
-        if auto_aplicar and valida:
+        if auto_aplicar and valida and float(conf or 0) >= confianza_minima:
             c = indice.por_clave(clave)
             r["clave_sugerida"] = clave
             r["descripcion_sugerida"] = c.get("descripcion", "")

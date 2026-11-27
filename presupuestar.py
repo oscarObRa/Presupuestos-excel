@@ -308,11 +308,12 @@ def main(
                                   "y pon tu DEEPSEEK_API_KEY (o OPENROUTER_API_KEY).")
                 else:
                     paso(2, f"Consultando IA ({pendientes_ia} conceptos)...")
-                    sugerencias = llm.resolver(resultados)
+                    sugerencias = llm.resolver(resultados, buscar=matcher.candidatos_para_ia)
                     # `indice` debe exponer por_clave(): el ClienteCosteo cumple
                     # ese contrato (igual que el flujo web).
                     aplicadas = aplicar_sugerencias(resultados, cost_client, sugerencias,
-                                                    auto_aplicar=llm_cfg.get("auto_aplicar", True))
+                                                    auto_aplicar=llm_cfg.get("auto_aplicar", True),
+                                                    confianza_minima=llm_cfg.get("confianza_minima", 0.85))
                     ok(f"IA revisó {len(sugerencias)} conceptos, aplicó {aplicadas}")
                     stats = matcher.stats_matcheo(resultados)
     except Exception as e:
