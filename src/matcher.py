@@ -248,12 +248,44 @@ class Matcher:
             if self._unidad[idx] != normalizar_unidad(unidad_entrada):
                 continue
 
-            # Score combinado: token_set_ratio + cobertura ponderada por IDF
-            sc = fuzz.token_set_ratio(normalizar(c.get("descripcion")), desc_norm)
-            hay = sum(1 for t in q_set if t in self._tset[idx] or any(t in x or x in t for x in self._tset[idx]))
-            cov = hay / len(q_set) if q_set else 0
+            tset = self._tset[idx]
+
+            def _en_candidato(t: str) -> bool:
+                # Token presente por igualdad o prefijo (singular/plural y
+                # variantes morfológicas simples). Se descartó la contención
+                # bidireccional ('t in x or x in t'): hacía pasar cualquier
+                # fragmento como coincidencia (p.ej. '12' dentro de '120').
+                return (t in tset
+                        or any(x.startswith(t) for x in tset)
+                        or any(t.startswith(x) for x in tset if len(x) >= 3))
+
+            # La cobertura cuenta solo tokens con contenido discriminante: los
+            # dígitos puros son dimensiones (12, 20, 40...) y no deben cubrir
+            # ni consumir cobertura por sí solos.
+            tokens_info = [t for t in q_set if not t.isdigit()]
+
+            # Cobertura EXACTA/prefijo de la entrada por el candidato
+            hay = sum(1 for t in tokens_info if _en_candidato(t))
+            cov = hay / len(tokens_info) if tokens_info else 0
+
+            # token_set_ratio otorga ~100 cuando el candidato es SUBCONJUNTO de
+            # tokens de la entrada (p.ej. descripción-cápsula '12"Ø.' dentro de
+            # una entrada de 30 tokens) y dispara confirmados absurdos.
+            # Se toma min(token_set, token_sort + 12): tolera orden distinto y
+            # detalle extra en la entrada, pero castiga el desbalance real.
+            cand_norm = normalizar(c.get("descripcion"))
+            sc = min(
+                fuzz.token_set_ratio(cand_norm, desc_norm),
+                fuzz.token_sort_ratio(cand_norm, desc_norm) + 12,
+            )
             comb = 0.6 * sc + 0.4 * cov * 100
-            bonus = 8 if any(self._idf.get(t, 0) >= self._idf_mediana for t in q_set & self._tset[idx]) else 0
+
+            # Un candidato debe compartir al menos 2 tokens con contenido para
+            # poder confirmar; con menos queda como máximo 'dudoso' (piso).
+            if hay < 2:
+                comb = min(comb, self.piso)
+
+            bonus = 8 if any(self._idf.get(t, 0) >= self._idf_mediana for t in q_set & tset) else 0
             comb = min(100, comb + bonus)
             candidatos.append((comb, sc, idx))
 
@@ -279,7 +311,7 @@ class Matcher:
             c = self._conceptos[idx]
             top_candidatos.append({
                 "clave": c.get("clave", ""),
-                "descripcion": c.get("descripcion", ""),
+                "descripcion": self._desc_mostrable(c),
                 "unidad": c.get("unidad", ""),
                 "precio_unitario": c.get("precio_unitario", 0),
                 "score": round(comb, 1),
@@ -287,16 +319,34 @@ class Matcher:
 
         return {
             **base,
-            "clave_sugerida": self._conceptos[idx_best].get("clave", ""),
-            "descripcion_sugerida": self._conceptos[idx_best].get("descripcion", ""),
-            "unidad_sugerida": self._conceptos[idx_best].get("unidad", ""),
+            "clave_sugerida": best.get("clave", ""),
+            "descripcion_sugerida": self._desc_mostrable(best),
+            "unidad_sugerida": best.get("unidad", ""),
             "score": round(mejor_score, 1),
             "metodo": "oficial" if idx_best in candidatos_oficiales else "fuzzy",
             "estado": estado,
-            "pu_sugerido": self._conceptos[idx_best].get("precio_unitario", 0),
+            "pu_sugerido": best.get("precio_unitario", 0),
             "candidatos": top_candidatos,
             "aviso": aviso,
         }
+
+    @staticmethod
+    def _desc_mostrable(c: dict) -> str:
+        """Descripción mostrable del candidato.
+
+        Algunas claves del catálogo traen `descripcion` reducida a un
+        fragmento (p.ej. la dimensión '12"Ø.') mientras el texto real está en
+        `nivel_2` (jerarquía del paquete). Para mostrar/cotizar se prefiere el
+        texto completo cuando el fragmento no alcanza a describir nada.
+        """
+        desc = str(c.get("descripcion") or "").strip()
+        if len(desc) >= 15:
+            return desc
+        for alt in ("nivel_2", "nivel_3", "nivel_1"):
+            alt_txt = str(c.get(alt) or "").strip()
+            if len(alt_txt) > len(desc):
+                return alt_txt
+        return desc
 
     def _concepto_exacto(self, desc_norm: str, unidad_norm: str) -> Optional[dict]:
         """Concepto con descripción EXACTA y la MISMA unidad (normalizada).
